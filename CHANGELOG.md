@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.1.1]
+
+### Fixed
+
+- First Marketplace-publish dry run: 0.1.0 was hand-uploaded for the
+  one-time bootstrap, so 0.1.1 is the first version produced entirely by
+  the automated release pipeline. Functionally identical to 0.1.0.
+- `release.yml` reordered so the signed `.zip` is attached to the GitHub
+  release *before* the Marketplace push, so the artifact is always
+  available even when an upload step fails.
+
 ### Added
 
 - **Tool window** (`View → Tool Windows → Branch Lens`) — for the currently
