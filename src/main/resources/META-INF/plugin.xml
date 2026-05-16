@@ -1,0 +1,27 @@
+<idea-plugin>
+    <id>dev.branchlens</id>
+    <name>Branch Lens</name>
+    <vendor email="trdmitriisamoilenko@gmail.com" url="https://github.com/samoylenkodmitry/difftrack">Branch Lens</vendor>
+
+    <description><![CDATA[
+        Shows gutter badges next to lines that differ in other local Git branches.
+        Click a badge to see which branches diverged, the branch-side text, and
+        blame information for the corresponding line.<br/>
+        <br/>
+        Local Git only. No remotes, no network, no fuzzy matching.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends optional="true" config-file="branchlens-git.xml">Git4Idea</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <projectService serviceImplementation="dev.branchlens.BranchLensProjectService"/>
+        <applicationService serviceImplementation="dev.branchlens.settings.BranchLensSettings"/>
+        <projectConfigurable
+            parentId="tools"
+            instance="dev.branchlens.settings.BranchLensConfigurable"
+            id="dev.branchlens.settings"
+            displayName="Branch Lens"/>
+        <postStartupActivity implementation="dev.branchlens.BranchLensStartupActivity"/>
+    </extensions>
+</idea-plugin>
