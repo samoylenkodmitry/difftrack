@@ -10,6 +10,15 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
+    ignore:
+      # Kotlin must stay <= 2.1.x so the compiler emits debug-metadata v1, which is
+      # what the IDEA-bundled Kotlin stdlib (2.0.x in IDEA 2024.2) understands.
+      # Bumping past 2.1 produces `IllegalStateException: Debug metadata version
+      # mismatch` at runtime in the sandbox IDE.
+      - dependency-name: "org.jetbrains.kotlin.jvm"
+        versions: [">=2.2.0"]
+      - dependency-name: "org.jetbrains.kotlin:*"
+        versions: [">=2.2.0"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
