@@ -87,7 +87,16 @@ intellijPlatform {
 
     pluginVerification {
         ides {
-            recommended()
+            // `recommended()` resolves to ~7 IDEs (sinceBuild → latest EAP), which
+            // tipped ubuntu-latest into ClosedByInterruptException cascades while
+            // loading them in parallel. `select { }` narrows to a stable subset and
+            // skips bleeding-edge EAP builds where the plugin-loader API drifts.
+            select {
+                types = listOf(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdeaCommunity)
+                channels = listOf(org.jetbrains.intellij.platform.gradle.models.ProductRelease.Channel.RELEASE)
+                sinceBuild = providers.gradleProperty("pluginSinceBuild")
+                untilBuild = providers.provider { "252.*" }
+            }
         }
     }
 }
