@@ -8,3 +8,5 @@ out/
 local.properties
 .kotlin/
 .intellijPlatform/
+.qodana/
+
