@@ -60,6 +60,20 @@ jobs:
         run: |
           ./gradlew patchChangelog --release-note="$CHANGELOG"
 
+      # Always build the signed zip so it can be attached to the release even
+      # if Marketplace push fails (e.g. first-ever upload — see README).
+      - name: Build & sign plugin
+        env:
+          CERTIFICATE_CHAIN: ${{ secrets.CERTIFICATE_CHAIN }}
+          PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
+          PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
+        run: ./gradlew buildPlugin signPlugin
+
+      - name: Upload Release Asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload ${{ github.event.release.tag_name }} ./build/distributions/*.zip --clobber
+
       - name: Publish Plugin
         env:
           PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
@@ -67,11 +81,6 @@ jobs:
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           PRIVATE_KEY_PASSWORD: ${{ secrets.PRIVATE_KEY_PASSWORD }}
         run: ./gradlew publishPlugin
-
-      - name: Upload Release Asset
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload ${{ github.event.release.tag_name }} ./build/distributions/*
 
       - name: Create Pull Request
         if: ${{ steps.properties.outputs.changelog != '' }}

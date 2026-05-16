@@ -103,9 +103,26 @@ Releases are fully automated via the GitHub Actions workflows in
    `verify` (IntelliJ Plugin Verifier), and — if all four succeed — creates
    a **draft GitHub release** with the changelog body.
 2. Publishing that draft (or creating a pre-release) triggers `release.yml`,
-   which calls `./gradlew publishPlugin` against JetBrains Marketplace,
-   uploads the signed `.zip` to the GitHub release, and opens a PR that
-   patches `CHANGELOG.md` for the published version.
+   which builds + signs the plugin, uploads the signed `.zip` to the GitHub
+   release, calls `./gradlew publishPlugin` against JetBrains Marketplace,
+   and opens a PR that patches `CHANGELOG.md` for the published version.
+
+### One-time setup: first Marketplace upload
+
+The very first version of any plugin has to be uploaded to JetBrains
+Marketplace **by hand** (so you can set license, category, vendor URL, etc.).
+Subsequent versions then auto-publish via `release.yml`.
+
+To do it:
+
+1. Run `./gradlew buildPlugin` and grab `build/distributions/branch-lens-*.zip`
+   (or download it from the corresponding GitHub release).
+2. Go to <https://plugins.jetbrains.com/plugin/add>, sign in with the same
+   JetBrains Hub account that owns `PUBLISH_TOKEN`, upload the zip, fill in
+   the listing fields, and submit.
+3. Wait for Marketplace approval (usually a few hours).
+4. From the next published GitHub release onwards, `release.yml` finds the
+   plugin by its id and pushes new versions without any manual step.
 
 The release workflow needs four repository secrets:
 
