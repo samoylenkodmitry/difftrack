@@ -71,10 +71,6 @@ enum class SkippedReason {
     TOO_LARGE,
     BINARY,
     NOT_IN_REPO,
-    GIT_UNAVAILABLE,
-    GIT_TIMEOUT,
-    NO_VIRTUAL_FILE,
-    DISABLED,
     NO_OTHER_BRANCHES,
 }
 

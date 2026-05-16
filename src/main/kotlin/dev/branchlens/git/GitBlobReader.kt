@@ -7,7 +7,6 @@ sealed class BlobResult {
     object NotFound : BlobResult()
     object Binary : BlobResult()
     data class Text(val content: String) : BlobResult()
-    data class Error(val message: String) : BlobResult()
 }
 
 class GitBlobReader(private val cli: GitCli, private val timeoutMs: Long) {

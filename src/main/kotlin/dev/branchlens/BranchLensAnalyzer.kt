@@ -1,5 +1,8 @@
 package dev.branchlens
 
+import dev.branchlens.cache.AnalysisKey
+import dev.branchlens.cache.BlameKey
+import dev.branchlens.cache.BranchLensCache
 import dev.branchlens.diff.HunkMapper
 import dev.branchlens.diff.LineDifferenceClassifier
 import dev.branchlens.git.BlobResult
@@ -39,6 +42,7 @@ class BranchLensAnalyzer(
     private val diffRunner: GitDiffRunner,
     private val blameRunner: GitBlameRunner,
     private val settings: AnalyzerSettings,
+    private val cache: BranchLensCache? = null,
 ) {
     data class AnalyzerSettings(
         val maxLines: Int,
@@ -80,6 +84,19 @@ class BranchLensAnalyzer(
             return@coroutineScope FileAnalysisResult.Skipped(SkippedReason.NO_OTHER_BRANCHES)
         }
 
+        val documentHash = TextUtil.stableHash(normalizedText)
+        val branchTipsHash = computeBranchTipsHash(filtered)
+        val settingsHash = computeSettingsHash()
+
+        val cacheKey = AnalysisKey(
+            repoRoot = repo.root,
+            relativePath = relativePath,
+            documentHash = documentHash,
+            branchTipsHash = branchTipsHash,
+            settingsHash = settingsHash,
+        )
+        cache?.getAnalysis(cacheKey)?.let { return@coroutineScope it }
+
         val currentTmp = TempFileUtil.writeTempUtf8("branchlens-current-", ".txt", normalizedText)
 
         val collected = mutableListOf<BranchLineDifference>()
@@ -95,13 +112,15 @@ class BranchLensAnalyzer(
             TempFileUtil.safeDelete(currentTmp)
         }
 
-        LineDifferenceClassifier.aggregate(
+        val result = LineDifferenceClassifier.aggregate(
             documentText = normalizedText,
             differences = collected,
             branchCount = filtered.size,
             branchContents = branchContents,
             branchBlames = branchBlames,
         )
+        cache?.putAnalysis(cacheKey, result)
+        result
     }
 
     private suspend fun analyzeBranch(
@@ -125,7 +144,6 @@ class BranchLensAnalyzer(
                 collected += BranchLineDifference.FileMissingInBranch(branch, relativePath)
             }
             BlobResult.Binary -> { /* skip */ }
-            is BlobResult.Error -> { /* skip */ }
             is BlobResult.Text -> {
                 branchContents[branch.name] = blob.content
                 val branchTmp = TempFileUtil.writeTempUtf8("branchlens-branch-", ".txt", blob.content)
@@ -133,31 +151,46 @@ class BranchLensAnalyzer(
                     val diff = diffRunner.diff(repo.root, currentTmp, branchTmp, settings.ignoreWhitespace)
                         ?: return
                     if (diff.hunks.isEmpty()) return
-                    val mapped = HunkMapper.map(branch, diff)
-                    collected += mapped
+                    collected += HunkMapper.map(branch, diff)
 
-                    // Blame the whole branch-side file once. Cheaper than per-range when
-                    // many lines differ, and we get nicer tooltips for free.
-                    val blame = try {
-                        blameRunner.blame(
-                            repoRoot = repo.root,
-                            branchCommit = branch.headCommit,
-                            relativePath = relativePath,
-                            range = null,
-                            useMoveAware = settings.useMoveAwareBlame,
-                            useCopyAware = settings.useCopyAwareBlame,
-                        )
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Throwable) {
-                        emptyMap()
-                    }
+                    val blame = fetchBlame(repo.root, branch.headCommit, relativePath)
                     if (blame.isNotEmpty()) branchBlames[branch.name] = blame
                 } finally {
                     TempFileUtil.safeDelete(branchTmp)
                 }
             }
         }
+    }
+
+    private suspend fun fetchBlame(
+        repoRoot: Path,
+        branchCommit: String,
+        relativePath: String,
+    ): Map<Int, BlameInfo> {
+        val key = BlameKey(
+            repoRoot = repoRoot,
+            branchCommit = branchCommit,
+            relativePath = relativePath,
+            moveAware = settings.useMoveAwareBlame,
+            copyAware = settings.useCopyAwareBlame,
+        )
+        cache?.getBlame(key)?.let { return it }
+        val fresh = try {
+            blameRunner.blame(
+                repoRoot = repoRoot,
+                branchCommit = branchCommit,
+                relativePath = relativePath,
+                range = null,
+                useMoveAware = settings.useMoveAwareBlame,
+                useCopyAware = settings.useCopyAwareBlame,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            emptyMap()
+        }
+        if (fresh.isNotEmpty()) cache?.putBlame(key, fresh)
+        return fresh
     }
 
     private fun filterBranches(branches: List<LocalBranch>): List<LocalBranch> {
@@ -185,6 +218,21 @@ class BranchLensAnalyzer(
         } catch (_: Throwable) {
             file.fileName.toString()
         }
+
+    private fun computeBranchTipsHash(filtered: List<LocalBranch>): String =
+        TextUtil.stableHash(filtered.joinToString("|") { "${it.name}=${it.headCommit}" })
+
+    private fun computeSettingsHash(): String = TextUtil.stableHash(
+        buildString {
+            append(settings.maxBranches).append('|')
+            append(settings.staleBranchDays).append('|')
+            append(settings.includeStaleBranches).append('|')
+            append(settings.ignoreWhitespace).append('|')
+            append(settings.useMoveAwareBlame).append('|')
+            append(settings.useCopyAwareBlame).append('|')
+            append(settings.excludedBranchPatterns.joinToString(","))
+        },
+    )
 
     private fun matchesGlob(name: String, pattern: String): Boolean {
         if (pattern.isBlank()) return false

@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Tool window** (`View → Tool Windows → Branch Lens`) — for the currently
+  active editor, lists every diverging line grouped by branch with author,
+  date, and commit subject. Single-click jumps the editor to the line;
+  double-click also opens the diff viewer. Includes a Refresh button.
+- **Plugin icon** (light + dark SVG) under `META-INF/`.
+- **Editor / VCS action `Compare File with Local Branch…`** (right-click in
+  editor, Git main menu, or Ctrl+Shift+A) — lets you pick any local branch
+  from a chooser and open IDEA's diff viewer between the current file and
+  its blob on that branch, without needing a gutter badge.
+- **Result cache** — per-project LRU stores: full analysis result keyed by
+  (file, document hash, branch tips fingerprint, settings hash), and
+  per-branch blame keyed by (branch commit, file path). Re-opening files
+  or switching editors no longer re-runs git when nothing changed.
+
 ### Changed
 
 - Hover tooltip now lists each diverging branch with the blame author and
@@ -13,7 +29,15 @@
   during analysis so the per-line attribution is available without a second
   round trip on click.
 
-### Added
+### Removed
+
+- Dead scaffold modules (`Debouncer`, `EditorTracker`, `VisibleRangeTracker`,
+  `GitCli.stdoutTextOrThrow`, `BlobResult.Error`, and unused `SkippedReason`
+  enum members) that were placeholders the final wiring inlined.
+
+### Initial MVP
+
+- Initial MVP per the spec in `roadmap.md`:
 
 - Initial MVP per the spec in `roadmap.md`:
   - Gutter badges for editor lines that differ in other local Git branches.

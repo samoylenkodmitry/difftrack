@@ -19,10 +19,6 @@ data class GitResult(
     val stderr: String,
 ) {
     val stdoutText: String get() = String(stdout, Charsets.UTF_8)
-    fun stdoutTextOrThrow(): String {
-        require(exitCode == 0) { "git exited $exitCode: $stderr" }
-        return stdoutText
-    }
 }
 
 class GitTimeoutException(message: String) : RuntimeException(message)

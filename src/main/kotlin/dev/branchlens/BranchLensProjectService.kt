@@ -15,9 +15,12 @@ import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
 import com.intellij.openapi.fileEditor.FileEditorManagerListener
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
+import dev.branchlens.actions.CompareFileWithBranchAction
+import dev.branchlens.cache.BranchLensCache
 import dev.branchlens.editor.GutterBadgeRenderer
 import dev.branchlens.git.GitBlameRunner
 import dev.branchlens.git.GitBlobReader
@@ -48,6 +51,33 @@ class BranchLensProjectService(
     private val lastResult = ConcurrentHashMap<Editor, FileAnalysisResult>()
     private val attachedDocs = ConcurrentHashMap<Document, MutableSet<Editor>>()
     private val renderer = GutterBadgeRenderer()
+    private val listeners = java.util.concurrent.CopyOnWriteArrayList<ResultListener>()
+    @Volatile private var activeEditor: Editor? = null
+
+    fun interface ResultListener {
+        fun onResultChanged(editor: Editor?, virtualFile: VirtualFile?, result: FileAnalysisResult?)
+    }
+
+    fun addResultListener(listener: ResultListener): com.intellij.openapi.Disposable {
+        listeners.add(listener)
+        // Push the current snapshot so a freshly-opened tool window sees state without
+        // waiting for the next analysis tick.
+        val current = activeEditor
+        val file = current?.let { FileDocumentManager.getInstance().getFile(it.document) }
+        listener.onResultChanged(current, file, current?.let { lastResult[it] })
+        return com.intellij.openapi.Disposable { listeners.remove(listener) }
+    }
+
+    private fun fireResult(editor: Editor?, result: FileAnalysisResult?) {
+        val file = editor?.let { FileDocumentManager.getInstance().getFile(it.document) }
+        for (l in listeners) {
+            try {
+                l.onResultChanged(editor, file, result)
+            } catch (t: Throwable) {
+                log.warn("Branch Lens result listener threw: ${t.message}", t)
+            }
+        }
+    }
 
     fun start() {
         val bus = project.messageBus.connect(project)
@@ -96,19 +126,40 @@ class BranchLensProjectService(
         attachedDocs.clear()
     }
 
+    /**
+     * Launches the "Compare file with branch…" chooser using the service's coroutine
+     * scope so cancellation is tied to the project lifecycle.
+     */
+    fun launchCompareFlow(editor: com.intellij.openapi.editor.Editor, file: VirtualFile, e: AnActionEvent) {
+        if (project.isDisposed) return
+        scope.launch(Dispatchers.Default) {
+            try {
+                CompareFileWithBranchAction.runCompareFlow(scope, project, editor, file, e)
+            } catch (_: CancellationException) {
+                // expected on project dispose
+            } catch (t: Throwable) {
+                log.warn("Branch Lens compare flow failed: ${t.message}", t)
+            }
+        }
+    }
+
     private fun marginLines(): Int = BranchLensSettings.getInstance().state.visibleRenderMarginLines
 
     private fun scheduleForCurrentlyOpen() {
         if (project.isDisposed) return
         val manager = FileEditorManager.getInstance(project)
+        var firstEditor: Editor? = null
         for (file in manager.selectedFiles) {
             for (editor in manager.getEditors(file)) {
                 val textEditor = (editor as? TextEditor)?.editor ?: continue
                 if (textEditor.project !== project) continue
                 attachedDocs.getOrPut(textEditor.document) { mutableSetOf() }.add(textEditor)
+                if (firstEditor == null) firstEditor = textEditor
                 scheduleAnalysis(textEditor)
             }
         }
+        activeEditor = firstEditor
+        fireResult(firstEditor, firstEditor?.let { lastResult[it] })
     }
 
     private fun cleanupClosed() {
@@ -179,6 +230,7 @@ class BranchLensProjectService(
                 useCopyAwareBlame = settings.useCopyAwareBlame,
                 excludedBranchPatterns = settings.excludedBranchPatterns.toList(),
             ),
+            cache = BranchLensCache.getInstance(project),
         )
 
         val result = analyzer.analyze(snapshot)
@@ -190,8 +242,20 @@ class BranchLensProjectService(
                 is FileAnalysisResult.Skipped -> renderer.clear(editor)
                 FileAnalysisResult.NotComputed -> renderer.clear(editor)
             }
+            if (editor === activeEditor) fireResult(editor, result)
         }
     }
+
+    /**
+     * Re-runs analysis for the currently active editor on demand (used by the tool-window
+     * Refresh action).
+     */
+    fun refreshActive() {
+        val editor = activeEditor ?: return
+        scheduleAnalysis(editor)
+    }
+
+    fun activeEditor(): Editor? = activeEditor
 
     private fun buildSnapshot(editor: Editor): EditorSnapshot? {
         if (project.isDisposed) return null

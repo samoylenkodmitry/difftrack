@@ -16,6 +16,7 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <projectService serviceImplementation="dev.branchlens.BranchLensProjectService"/>
+        <projectService serviceImplementation="dev.branchlens.cache.BranchLensCache"/>
         <applicationService serviceImplementation="dev.branchlens.settings.BranchLensSettings"/>
         <projectConfigurable
             parentId="tools"
@@ -23,5 +24,19 @@
             id="dev.branchlens.settings"
             displayName="Branch Lens"/>
         <postStartupActivity implementation="dev.branchlens.BranchLensStartupActivity"/>
+        <toolWindow id="Branch Lens"
+                    anchor="bottom"
+                    icon="AllIcons.Vcs.Branch"
+                    factoryClass="dev.branchlens.ui.BranchLensToolWindowFactory"/>
     </extensions>
+
+    <actions>
+        <action id="dev.branchlens.CompareFileWithBranch"
+                class="dev.branchlens.actions.CompareFileWithBranchAction"
+                text="Compare File with Local Branch…"
+                description="Show diff between the current file and its version on another local Git branch">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="Vcs.MainMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>
