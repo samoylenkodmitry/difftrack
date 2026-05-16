@@ -1,133 +1,155 @@
 package dev.branchlens.popup
 
-import com.intellij.openapi.actionSystem.ActionGroup
-import com.intellij.openapi.actionSystem.ActionManager
-import com.intellij.openapi.actionSystem.ActionPlaces
-import com.intellij.openapi.project.Project
-import com.intellij.ui.components.JBLabel
-import com.intellij.ui.components.JBScrollPane
-import com.intellij.util.ui.JBUI
+import dev.branchlens.model.BlameInfo
 import dev.branchlens.model.BranchLineDifference
 import dev.branchlens.model.Confidence
 import dev.branchlens.model.LineSummary
-import java.awt.BorderLayout
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import javax.swing.BoxLayout
-import javax.swing.JComponent
-import javax.swing.JPanel
-import javax.swing.SwingConstants
 
 object BranchLensPopup {
 
-    fun buildPanel(@Suppress("UNUSED_PARAMETER") project: Project?, summary: LineSummary, actions: ActionGroup): JComponent {
-        val root = JPanel(BorderLayout())
-        val list = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS) }
+    private val DATE_FMT: DateTimeFormatter =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault())
 
-        val header = JBLabel(headerText(summary), SwingConstants.LEFT)
-        header.border = JBUI.Borders.empty(6, 8, 4, 8)
-        list.add(header)
+    /**
+     * HTML tooltip rendered on gutter-badge hover. Lists each branch with the
+     * blame author + date for the branch-side line.
+     */
+    fun renderTooltip(summary: LineSummary): String {
+        val sb = StringBuilder("<html><body style='margin:4px 6px;'>")
+        sb.append("<b>")
+            .append(escape(headerText(summary)))
+            .append("</b><br><br>")
 
+        val seenBranches = mutableSetOf<String>()
         for (diff in summary.differences) {
-            list.add(rowFor(diff))
+            if (!seenBranches.add(diff.branch.name)) continue
+            appendBranchRow(sb, diff.branch.name, kindLabel(diff), summary.blameFor(diff))
         }
         for (insertion in summary.insertions) {
-            list.add(rowFor(insertion))
+            if (!seenBranches.add(insertion.branch.name)) continue
+            appendBranchRow(
+                sb,
+                insertion.branch.name,
+                "inserts ${insertion.branchText.size} line${plural(insertion.branchText.size)}",
+                summary.blameFor(insertion),
+            )
         }
-
-        val toolbar = ActionManager.getInstance()
-            .createActionToolbar(ActionPlaces.POPUP, actions, true)
-        toolbar.targetComponent = list
-        root.add(toolbar.component, BorderLayout.NORTH)
-        root.add(JBScrollPane(list), BorderLayout.CENTER)
-        root.preferredSize = JBUI.size(420, 280)
-        return root
+        sb.append("</body></html>")
+        return sb.toString()
     }
 
-    fun renderTooltip(summary: LineSummary): String {
-        val branches = summary.differences.map { it.branch.name }.toSet() +
-            summary.insertions.map { it.branch.name }.toSet()
-        val verb = when {
-            summary.differences.all { it is BranchLineDifference.FileMissingInBranch } &&
-                summary.insertions.isEmpty() -> "file missing"
-            summary.differences.isEmpty() -> "branches insert lines here"
-            summary.differences.any {
-                it is BranchLineDifference.ChangedBlock && it.confidence == Confidence.BLOCK_ONLY
-            } -> "changed block in"
-            else -> "different in"
-        }
-        val names = branches.take(5).joinToString(", ")
-        val tail = if (branches.size > 5) " and ${branches.size - 5} more" else ""
-        return "Branch Lens: $verb ${branches.size} branch${if (branches.size == 1) "" else "es"}: $names$tail"
-    }
-
+    /**
+     * Plain-text "Copy summary" payload — used by chooser menu actions.
+     */
     fun renderPlainText(summary: LineSummary): String = buildString {
         appendLine(headerText(summary))
+        appendLine()
         for (diff in summary.differences) {
-            appendLine(rowText(diff))
+            appendLine(renderDiffPlain(summary, diff))
             appendLine()
         }
         for (insertion in summary.insertions) {
-            appendLine(rowText(insertion))
+            appendLine(renderInsertionPlain(summary, insertion))
             appendLine()
         }
     }.trim()
+
+    private fun appendBranchRow(sb: StringBuilder, branchName: String, kind: String, blame: BlameInfo?) {
+        sb.append("<b>").append(escape(branchName)).append("</b>")
+        sb.append(" &mdash; ").append(escape(kind))
+        if (blame != null) {
+            sb.append("<br><span style='color:gray;'>")
+            blame.author?.let { sb.append(escape(it)) }
+            blame.authorTimeEpochSeconds?.let {
+                if (blame.author != null) sb.append(", ")
+                sb.append(escape(DATE_FMT.format(Instant.ofEpochSecond(it))))
+            }
+            blame.summary?.let { summary ->
+                if (blame.author != null || blame.authorTimeEpochSeconds != null) sb.append(" — ")
+                sb.append(escape(summary.take(80)))
+            }
+            sb.append("</span>")
+        }
+        sb.append("<br><br>")
+    }
 
     private fun headerText(summary: LineSummary): String {
         val differing = summary.differences.map { it.branch.name }.toSet()
         val inserting = summary.insertions.map { it.branch.name }.toSet() - differing
         val total = differing.size + inserting.size
-        return "Different in $total local branch${if (total == 1) "" else "es"} (line ${summary.currentLine})"
+        return "Different in $total local branch${plural(total, "", "es")} — line ${summary.currentLine}"
     }
 
-    private fun rowFor(diff: BranchLineDifference): JComponent {
-        val panel = JPanel()
-        panel.layout = BoxLayout(panel, BoxLayout.Y_AXIS)
-        panel.border = JBUI.Borders.empty(4, 8)
-        for (line in rowText(diff).split('\n')) {
-            panel.add(JBLabel(line))
+    private fun kindLabel(diff: BranchLineDifference): String = when (diff) {
+        is BranchLineDifference.ReplacedLine -> when (diff.confidence) {
+            Confidence.HIGH -> "replaced (high confidence)"
+            Confidence.MEDIUM -> "replaced (in a multi-line edit)"
+            Confidence.BLOCK_ONLY -> "changed block"
         }
-        return panel
+        is BranchLineDifference.ChangedBlock -> "changed block (ambiguous line pairing)"
+        is BranchLineDifference.DeletedInBranch -> "line absent in branch"
+        is BranchLineDifference.BranchInsertionAfterCurrentLine ->
+            "inserts ${diff.branchText.size} line${plural(diff.branchText.size)}"
+        is BranchLineDifference.FileMissingInBranch -> "file missing in branch"
     }
 
-    private fun rowText(diff: BranchLineDifference): String = when (diff) {
-        is BranchLineDifference.ReplacedLine -> buildString {
-            appendLine("${diff.branch.name}")
-            appendLine("  Confidence: ${diff.confidence.name.lowercase()}")
-            appendLine("  Branch line: ${diff.branchLine}")
-            appendLine("  Current: ${diff.currentText}")
-            append("  Branch:  ${diff.branchText}")
+    private fun renderDiffPlain(summary: LineSummary, diff: BranchLineDifference): String = buildString {
+        appendLine(diff.branch.name)
+        appendLine("  Kind: ${kindLabel(diff)}")
+        summary.blameFor(diff)?.let { blame ->
+            blame.author?.let { appendLine("  Modified by: $it") }
+            blame.authorTimeEpochSeconds?.let {
+                appendLine("  Date: ${DATE_FMT.format(Instant.ofEpochSecond(it))}")
+            }
+            appendLine("  Commit: ${blame.commitHash.take(8)} ${blame.summary.orEmpty()}".trimEnd())
         }
-        is BranchLineDifference.ChangedBlock -> buildString {
-            appendLine("${diff.branch.name}")
-            appendLine("  Confidence: changed block")
-            val br = diff.branchLines
-            if (br != null) appendLine("  Branch lines: ${br.first}-${br.last}")
-            appendLine("  This current line belongs to a changed block;")
-            append("  exact branch-line pairing is ambiguous.")
-        }
-        is BranchLineDifference.DeletedInBranch -> buildString {
-            appendLine("${diff.branch.name}")
-            appendLine("  This line is absent in the branch.")
-            append("  No branch-side line exists to blame.")
-        }
-        is BranchLineDifference.BranchInsertionAfterCurrentLine -> buildString {
-            appendLine("${diff.branch.name}")
-            appendLine("  Branch inserts ${diff.branchText.size} line${if (diff.branchText.size == 1) "" else "s"} after this line.")
-            append("  Branch lines: ${diff.branchLines.first}-${diff.branchLines.last}")
-        }
-        is BranchLineDifference.FileMissingInBranch -> buildString {
-            appendLine("${diff.branch.name}")
-            append("  File is missing in this branch.")
+        when (diff) {
+            is BranchLineDifference.ReplacedLine -> {
+                appendLine("  Branch line: ${diff.branchLine}")
+                appendLine("  Current: ${diff.currentText}")
+                append("  Branch:  ${diff.branchText}")
+            }
+            is BranchLineDifference.ChangedBlock -> {
+                diff.branchLines?.let { appendLine("  Branch lines: ${it.first}-${it.last}") }
+                append("  Branch-side line pairing is ambiguous; see Diff for the full block.")
+            }
+            is BranchLineDifference.DeletedInBranch -> {
+                append("  This line is absent in the branch; no branch-side line to blame.")
+            }
+            is BranchLineDifference.BranchInsertionAfterCurrentLine -> {
+                append("  Branch lines: ${diff.branchLines.first}-${diff.branchLines.last}")
+            }
+            is BranchLineDifference.FileMissingInBranch -> {
+                append("  File is missing entirely in this branch.")
+            }
         }
     }
 
-    @Suppress("unused")
-    private fun formatTime(epochSeconds: Long?): String {
-        if (epochSeconds == null) return ""
-        return DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-            .withZone(ZoneId.systemDefault())
-            .format(Instant.ofEpochSecond(epochSeconds))
+    private fun renderInsertionPlain(
+        summary: LineSummary,
+        insertion: BranchLineDifference.BranchInsertionAfterCurrentLine,
+    ): String = buildString {
+        appendLine(insertion.branch.name)
+        appendLine("  Kind: ${kindLabel(insertion)}")
+        summary.blameFor(insertion)?.let { blame ->
+            blame.author?.let { appendLine("  Modified by: $it") }
+            blame.authorTimeEpochSeconds?.let {
+                appendLine("  Date: ${DATE_FMT.format(Instant.ofEpochSecond(it))}")
+            }
+            appendLine("  Commit: ${blame.commitHash.take(8)} ${blame.summary.orEmpty()}".trimEnd())
+        }
+        append("  Branch lines: ${insertion.branchLines.first}-${insertion.branchLines.last}")
     }
+
+    private fun plural(n: Int, singular: String = "", plural: String = "s"): String =
+        if (n == 1) singular else plural
+
+    private fun escape(s: String): String = s
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\n", "<br>")
 }

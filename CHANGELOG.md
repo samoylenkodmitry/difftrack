@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Hover tooltip now lists each diverging branch with the blame author and
+  date for the corresponding branch-side line.
+- Click on a gutter badge opens IntelliJ's built-in diff viewer (full-file,
+  current vs branch). When more than one branch differs at the clicked line,
+  a chooser popup appears first listing each branch with author + date.
+- `git blame --line-porcelain` is now run against each diverging branch
+  during analysis so the per-line attribution is available without a second
+  round trip on click.
+
 ### Added
 
 - Initial MVP per the spec in `roadmap.md`:

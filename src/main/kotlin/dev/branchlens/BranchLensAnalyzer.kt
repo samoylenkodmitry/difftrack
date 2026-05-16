@@ -3,10 +3,12 @@ package dev.branchlens
 import dev.branchlens.diff.HunkMapper
 import dev.branchlens.diff.LineDifferenceClassifier
 import dev.branchlens.git.BlobResult
+import dev.branchlens.git.GitBlameRunner
 import dev.branchlens.git.GitBlobReader
 import dev.branchlens.git.GitBranchProvider
 import dev.branchlens.git.GitDiffRunner
 import dev.branchlens.git.GitRepositoryLocator
+import dev.branchlens.model.BlameInfo
 import dev.branchlens.model.BranchLineDifference
 import dev.branchlens.model.FileAnalysisResult
 import dev.branchlens.model.GitRepo
@@ -35,6 +37,7 @@ class BranchLensAnalyzer(
     private val branches: GitBranchProvider,
     private val blobs: GitBlobReader,
     private val diffRunner: GitDiffRunner,
+    private val blameRunner: GitBlameRunner,
     private val settings: AnalyzerSettings,
 ) {
     data class AnalyzerSettings(
@@ -44,6 +47,8 @@ class BranchLensAnalyzer(
         val staleBranchDays: Int,
         val includeStaleBranches: Boolean,
         val ignoreWhitespace: Boolean,
+        val useMoveAwareBlame: Boolean,
+        val useCopyAwareBlame: Boolean,
         val excludedBranchPatterns: List<String>,
     )
 
@@ -78,16 +83,25 @@ class BranchLensAnalyzer(
         val currentTmp = TempFileUtil.writeTempUtf8("branchlens-current-", ".txt", normalizedText)
 
         val collected = mutableListOf<BranchLineDifference>()
+        val branchContents = mutableMapOf<String, String>()
+        val branchBlames = mutableMapOf<String, Map<Int, BlameInfo>>()
+
         try {
             for (branch in filtered) {
                 coroutineContext.ensureActive()
-                analyzeBranch(repo, relativePath, currentTmp, branch, collected)
+                analyzeBranch(repo, relativePath, currentTmp, branch, collected, branchContents, branchBlames)
             }
         } finally {
             TempFileUtil.safeDelete(currentTmp)
         }
 
-        LineDifferenceClassifier.aggregate(normalizedText, collected, filtered.size)
+        LineDifferenceClassifier.aggregate(
+            documentText = normalizedText,
+            differences = collected,
+            branchCount = filtered.size,
+            branchContents = branchContents,
+            branchBlames = branchBlames,
+        )
     }
 
     private suspend fun analyzeBranch(
@@ -96,6 +110,8 @@ class BranchLensAnalyzer(
         currentTmp: Path,
         branch: LocalBranch,
         collected: MutableList<BranchLineDifference>,
+        branchContents: MutableMap<String, String>,
+        branchBlames: MutableMap<String, Map<Int, BlameInfo>>,
     ) {
         val blob = try {
             blobs.read(repo.root, branch.headCommit, relativePath, settings.maxFileBytes)
@@ -111,12 +127,32 @@ class BranchLensAnalyzer(
             BlobResult.Binary -> { /* skip */ }
             is BlobResult.Error -> { /* skip */ }
             is BlobResult.Text -> {
+                branchContents[branch.name] = blob.content
                 val branchTmp = TempFileUtil.writeTempUtf8("branchlens-branch-", ".txt", blob.content)
                 try {
                     val diff = diffRunner.diff(repo.root, currentTmp, branchTmp, settings.ignoreWhitespace)
                         ?: return
                     if (diff.hunks.isEmpty()) return
-                    collected += HunkMapper.map(branch, diff)
+                    val mapped = HunkMapper.map(branch, diff)
+                    collected += mapped
+
+                    // Blame the whole branch-side file once. Cheaper than per-range when
+                    // many lines differ, and we get nicer tooltips for free.
+                    val blame = try {
+                        blameRunner.blame(
+                            repoRoot = repo.root,
+                            branchCommit = branch.headCommit,
+                            relativePath = relativePath,
+                            range = null,
+                            useMoveAware = settings.useMoveAwareBlame,
+                            useCopyAware = settings.useCopyAwareBlame,
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                        emptyMap()
+                    }
+                    if (blame.isNotEmpty()) branchBlames[branch.name] = blame
                 } finally {
                     TempFileUtil.safeDelete(branchTmp)
                 }

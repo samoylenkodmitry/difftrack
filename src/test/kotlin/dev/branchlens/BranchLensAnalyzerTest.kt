@@ -1,5 +1,6 @@
 package dev.branchlens
 
+import dev.branchlens.git.GitBlameRunner
 import dev.branchlens.git.GitBlobReader
 import dev.branchlens.git.GitBranchProvider
 import dev.branchlens.git.GitCli
@@ -101,6 +102,48 @@ class BranchLensAnalyzerTest {
     }
 
     @Test
+    fun blameIsPopulatedForBranchSideLines() = runBlocking {
+        git("checkout", "-b", "feature/blame")
+        writeFile("foo.kt", "alpha\nBETA-MODIFIED\ngamma\n")
+        // Different committer name so the blame attribution is obvious.
+        val authoredAt = "1700000000"
+        ProcessBuilder("git", "-c", "user.email=alice@example.com", "-c", "user.name=Alice", "commit", "-am", "tweak beta")
+            .directory(repo.toFile())
+            .redirectErrorStream(true)
+            .also { pb ->
+                val env = pb.environment()
+                env["GIT_AUTHOR_NAME"] = "Alice"
+                env["GIT_AUTHOR_EMAIL"] = "alice@example.com"
+                env["GIT_AUTHOR_DATE"] = "$authoredAt +0000"
+                env["GIT_COMMITTER_NAME"] = "Alice"
+                env["GIT_COMMITTER_EMAIL"] = "alice@example.com"
+                env["GIT_COMMITTER_DATE"] = "$authoredAt +0000"
+            }
+            .start()
+            .also { p ->
+                p.inputStream.bufferedReader().use { it.readText() }
+                assertEquals(0, p.waitFor())
+            }
+        git("checkout", "main")
+
+        val analyzer = buildAnalyzer()
+        val result = analyzer.analyze(
+            EditorSnapshot(
+                filePath = repo.resolve("foo.kt"),
+                text = "alpha\nbeta\ngamma\n",
+                documentStamp = 0L,
+            ),
+        )
+        val computed = result as FileAnalysisResult.Computed
+        val blame = computed.branchBlames["feature/blame"]
+        assertTrue("expected blame for feature/blame, got ${computed.branchBlames.keys}", blame != null)
+        val line2 = blame!![2]
+        assertTrue("expected blame for line 2, got $blame", line2 != null)
+        assertEquals("Alice", line2!!.author)
+        assertEquals(1700000000L, line2.authorTimeEpochSeconds)
+    }
+
+    @Test
     fun noOtherBranchesYieldsSkipped() = runBlocking {
         val analyzer = buildAnalyzer()
         val result = analyzer.analyze(
@@ -119,6 +162,7 @@ class BranchLensAnalyzerTest {
         branches = GitBranchProvider(cli, timeoutMs),
         blobs = GitBlobReader(cli, timeoutMs),
         diffRunner = GitDiffRunner(cli, timeoutMs),
+        blameRunner = GitBlameRunner(cli, timeoutMs),
         settings = BranchLensAnalyzer.AnalyzerSettings(
             maxLines = maxLines,
             maxFileBytes = 2L * 1024 * 1024,
@@ -126,6 +170,8 @@ class BranchLensAnalyzerTest {
             staleBranchDays = 365 * 10,
             includeStaleBranches = true,
             ignoreWhitespace = ignoreWhitespace,
+            useMoveAwareBlame = true,
+            useCopyAwareBlame = false,
             excludedBranchPatterns = excluded,
         ),
     )

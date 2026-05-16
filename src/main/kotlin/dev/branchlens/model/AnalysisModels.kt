@@ -88,6 +88,8 @@ sealed class FileAnalysisResult {
         val perLineDifferences: Map<Int, List<BranchLineDifference>>,
         val insertionsAfter: Map<Int, List<BranchLineDifference.BranchInsertionAfterCurrentLine>>,
         val missingInBranches: List<BranchLineDifference.FileMissingInBranch>,
+        val branchContents: Map<String, String>,
+        val branchBlames: Map<String, Map<Int, BlameInfo>>,
         val computedAtNanos: Long,
         val documentHash: String,
         val branchCount: Int,
@@ -96,7 +98,7 @@ sealed class FileAnalysisResult {
             val diffs = perLineDifferences[line] ?: emptyList()
             val inserts = insertionsAfter[line] ?: emptyList()
             if (diffs.isEmpty() && inserts.isEmpty()) return null
-            return LineSummary(line, diffs, inserts)
+            return LineSummary(line, diffs, inserts, branchBlames)
         }
     }
 }
@@ -105,11 +107,34 @@ data class LineSummary(
     val currentLine: Int,
     val differences: List<BranchLineDifference>,
     val insertions: List<BranchLineDifference.BranchInsertionAfterCurrentLine>,
+    val branchBlames: Map<String, Map<Int, BlameInfo>> = emptyMap(),
 ) {
     val identity: String =
         "$currentLine|${differences.size}|${insertions.size}|" +
             differences.joinToString(",") { "${it.branch.name}:${it.branch.headCommit}:${it.javaClass.simpleName}" } +
             "|" + insertions.joinToString(",") { "${it.branch.name}:${it.branch.headCommit}" }
+
+    /**
+     * Returns the most relevant branch-side line for a diff (i.e. the line we should
+     * blame to attribute the change to an author). `null` when the diff has no
+     * branch-side line (FileMissing, DeletedInBranch).
+     */
+    fun representativeBranchLine(diff: BranchLineDifference): Int? = when (diff) {
+        is BranchLineDifference.ReplacedLine -> diff.branchLine
+        is BranchLineDifference.ChangedBlock -> diff.branchLines?.first
+        is BranchLineDifference.BranchInsertionAfterCurrentLine -> diff.branchLines.first
+        is BranchLineDifference.DeletedInBranch -> null
+        is BranchLineDifference.FileMissingInBranch -> null
+    }
+
+    fun blameFor(diff: BranchLineDifference): BlameInfo? {
+        val line = representativeBranchLine(diff) ?: return null
+        return branchBlames[diff.branch.name]?.get(line)
+    }
+
+    fun blameFor(insertion: BranchLineDifference.BranchInsertionAfterCurrentLine): BlameInfo? {
+        return branchBlames[insertion.branch.name]?.get(insertion.branchLines.first)
+    }
 
     fun badgeText(): String {
         val differingBranches = differences.map { it.branch.name }.toSet()

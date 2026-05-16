@@ -19,6 +19,7 @@ import com.intellij.openapi.fileEditor.TextEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import dev.branchlens.editor.GutterBadgeRenderer
+import dev.branchlens.git.GitBlameRunner
 import dev.branchlens.git.GitBlobReader
 import dev.branchlens.git.GitBranchProvider
 import dev.branchlens.git.GitCli
@@ -166,6 +167,7 @@ class BranchLensProjectService(
             branches = GitBranchProvider(cli, timeout),
             blobs = GitBlobReader(cli, timeout),
             diffRunner = GitDiffRunner(cli, timeout),
+            blameRunner = GitBlameRunner(cli, timeout),
             settings = BranchLensAnalyzer.AnalyzerSettings(
                 maxLines = settings.maxLines,
                 maxFileBytes = settings.maxFileBytes,
@@ -173,6 +175,8 @@ class BranchLensProjectService(
                 staleBranchDays = settings.staleBranchDays,
                 includeStaleBranches = settings.includeStaleBranches,
                 ignoreWhitespace = settings.ignoreWhitespaceInDiff,
+                useMoveAwareBlame = settings.useMoveAwareBlame,
+                useCopyAwareBlame = settings.useCopyAwareBlame,
                 excludedBranchPatterns = settings.excludedBranchPatterns.toList(),
             ),
         )
