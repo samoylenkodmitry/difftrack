@@ -20,12 +20,10 @@ class GitBlobReader(private val cli: GitCli, private val timeoutMs: Long) {
             captureBinaryStdout = true,
         )
         if (result.exitCode != 0) {
-            val stderr = result.stderr
-            return when {
-                stderr.contains("does not exist", ignoreCase = true) ||
-                    stderr.contains("Path '", ignoreCase = false) -> BlobResult.NotFound
-                else -> BlobResult.Error(stderr.ifEmpty { "git cat-file exit ${result.exitCode}" })
-            }
+            // For `git cat-file -p <tree-ish>:<path>` the path is unambiguous, so any
+            // non-zero exit means the branch does not have a usable blob at that path.
+            // Real connector/I/O failures throw IOException before this point.
+            return BlobResult.NotFound
         }
         if (result.stdout.size.toLong() > maxBytes) return BlobResult.Binary
         if (TextUtil.looksBinary(result.stdout)) return BlobResult.Binary

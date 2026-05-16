@@ -7,7 +7,6 @@ import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.markup.GutterIconRenderer
 import com.intellij.openapi.editor.markup.HighlighterLayer
-import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
@@ -47,7 +46,6 @@ class GutterBadgeRenderer {
                 HighlighterLayer.ADDITIONAL_SYNTAX,
                 null,
             )
-            highlighter.targetArea = HighlighterTargetArea.LINES_IN_RANGE
             highlighter.gutterIconRenderer = BranchLensGutterIconRenderer(editor.project, summary)
             newHighlighters += highlighter
         }

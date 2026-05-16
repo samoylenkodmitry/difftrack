@@ -62,7 +62,11 @@ internal object PorcelainBlameParser {
                 i++
                 continue
             }
-            val resultLine = parts[2].toIntOrNull() ?: run { i++; continue }
+            val resultLine = parts[2].toIntOrNull()
+            if (resultLine == null) {
+                i++
+                continue
+            }
             i++
 
             val info = commitInfo.getOrPut(sha) { HashMap() }

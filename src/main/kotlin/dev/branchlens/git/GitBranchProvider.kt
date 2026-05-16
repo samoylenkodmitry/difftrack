@@ -6,15 +6,16 @@ import java.nio.file.Path
 class GitBranchProvider(private val cli: GitCli, private val timeoutMs: Long) {
 
     private companion object {
-        // `%00` in git's `for-each-ref --format` emits a literal NUL byte (U+0000).
-        // We use NUL as the field separator so branch names containing whitespace,
-        // commas, or other punctuation remain intact when we split.
-        val NUL_CHAR: Char = 0.toChar()
-        val NUL_STRING: String = NUL_CHAR.toString()
+        // Java's ProcessBuilder forbids NUL bytes inside command-line arguments, so we
+        // can't use `%00` as the git for-each-ref field separator. ASCII 0x1E (Record
+        // Separator) works just as well: git refnames must not contain ASCII control
+        // characters, so the separator is unambiguous, and argv accepts it.
+        val SEPARATOR_CHAR: Char = 30.toChar()
+        val SEPARATOR_STRING: String = SEPARATOR_CHAR.toString()
     }
 
     suspend fun listLocal(repoRoot: Path, currentBranch: String?): List<LocalBranch> {
-        val sep = NUL_STRING
+        val sep = SEPARATOR_STRING
         val format = "%(refname:short)$sep%(objectname)$sep" +
             "%(committerdate:unix)$sep%(authorname)$sep"
         val result = cli.run(
@@ -36,7 +37,7 @@ class GitBranchProvider(private val cli: GitCli, private val timeoutMs: Long) {
     }
 
     private fun parseLine(line: String, currentBranch: String?): LocalBranch? {
-        val parts = line.split(NUL_CHAR)
+        val parts = line.split(SEPARATOR_CHAR)
         if (parts.size < 4) return null
         val name = parts[0]
         val sha = parts[1]

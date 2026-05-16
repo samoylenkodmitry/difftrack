@@ -7,3 +7,4 @@ out/
 *.iws
 local.properties
 .kotlin/
+.intellijPlatform/
