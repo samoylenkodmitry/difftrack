@@ -7,6 +7,10 @@
 gutter badges next to lines or blocks that **differ in other local Git branches**, and
 tells you who last modified the corresponding branch-side line.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/samoylenkodmitry/difftrack/main/docs/screenshot.png" alt="Branch Lens gutter badges on pricing.kt" width="700"/>
+</p>
+
 Local Git only — no remotes, no fetch, no network, no fuzzy line-identity guesses.
 Git's own `diff` and `blame` are the source of truth.
 
@@ -30,10 +34,21 @@ Badges in the gutter:
 | `+`   | Only branch-side insertions anchor to this line.     |
 | `?`   | File is missing in (at least one of) the branches.   |
 
-Click a badge to open a popup with each branch's name, line number, current vs. branch
-text, and (when available) `git blame` author/date/commit. For deleted lines the popup
-honestly reports that no branch-side line exists to blame.
+Hover any badge for an HTML tooltip listing each branch with the blame author, date,
+and commit subject for the corresponding branch-side line. Click a badge to open
+IntelliJ's built-in diff viewer (with a chooser first when more than one branch
+differs at that line). A `Branch Lens` tool window at the bottom of the IDE lists
+every diverging line in the active file. The action **`Compare File with Local
+Branch…`** (right-click in editor / `Ctrl+Shift+A`) lets you pick any local branch
+and open the diff without needing a gutter badge.
 <!-- Plugin description end -->
+
+## Demo
+
+<video src="https://raw.githubusercontent.com/samoylenkodmitry/difftrack/main/docs/demo.mp4" controls width="700"></video>
+
+If the inline player doesn't render in your reader (e.g. on JetBrains Marketplace),
+open [`docs/demo.mp4`](docs/demo.mp4) directly on GitHub.
 
 ## Design principles
 
