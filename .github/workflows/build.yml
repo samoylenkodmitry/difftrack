@@ -32,7 +32,7 @@ jobs:
       pluginVerifierHomeDir: ${{ steps.properties.outputs.pluginVerifierHomeDir }}
     steps:
       - name: Fetch Sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Gradle Wrapper Validation
         uses: gradle/actions/wrapper-validation@v6
@@ -94,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -143,7 +143,7 @@ jobs:
           large-packages: false
 
       - name: Fetch Sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -172,7 +172,7 @@ jobs:
           large-packages: false
 
       - name: Fetch Sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -208,7 +208,7 @@ jobs:
       contents: write
     steps:
       - name: Fetch Sources
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Remove Old Release Drafts
         env:
