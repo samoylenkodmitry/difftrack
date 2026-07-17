@@ -6,9 +6,13 @@ import dev.branchlens.git.GitBranchProvider
 import dev.branchlens.git.GitCli
 import dev.branchlens.git.GitDiffRunner
 import dev.branchlens.git.GitRepositoryLocator
+import dev.branchlens.git.GitHistoryAnalyzer
+import dev.branchlens.git.GitRenameResolver
 import dev.branchlens.model.BranchLineDifference
+import dev.branchlens.model.ChangeLineage
 import dev.branchlens.model.FileAnalysisResult
 import dev.branchlens.model.SkippedReason
+import dev.branchlens.settings.BranchScopeMode
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -102,6 +106,16 @@ class BranchLensAnalyzerTest {
     }
 
     @Test
+    fun filesOverMaxBytesAreSkipped() = runBlocking {
+        val analyzer = buildAnalyzer(maxFileBytes = 8)
+        val result = analyzer.analyze(
+            EditorSnapshot(filePath = repo.resolve("foo.kt"), text = "alpha\nbeta\n", documentStamp = 0L),
+        )
+        assertTrue(result is FileAnalysisResult.Skipped)
+        assertEquals(SkippedReason.TOO_LARGE, (result as FileAnalysisResult.Skipped).reason)
+    }
+
+    @Test
     fun blameIsPopulatedForBranchSideLines() = runBlocking {
         git("checkout", "-b", "feature/blame")
         writeFile("foo.kt", "alpha\nBETA-MODIFIED\ngamma\n")
@@ -144,6 +158,49 @@ class BranchLensAnalyzerTest {
     }
 
     @Test
+    fun linePresentOnlyInCurrentUsesCurrentSnapshotBlame() = runBlocking {
+        git("branch", "feature/without-new-line")
+
+        val analyzer = buildAnalyzer()
+        val result = analyzer.analyze(
+            EditorSnapshot(
+                filePath = repo.resolve("foo.kt"),
+                text = "alpha\nnew working tree line\nbeta\ngamma\n",
+                documentStamp = 1L,
+            ),
+        ) as FileAnalysisResult.Computed
+
+        val diff = result.perLineDifferences[2]
+            ?.filterIsInstance<dev.branchlens.model.BranchLineDifference.DeletedInBranch>()
+            ?.single()
+        assertTrue("expected a current-only line", diff != null)
+        val attribution = result.summaryForLine(2)?.blameFor(diff!!)
+        assertTrue("expected current-side blame", attribution != null)
+        assertTrue("expected an uncommitted pseudo-commit", attribution!!.commitHash.all { it == '0' })
+        assertEquals(ChangeLineage.UNCOMMITTED_CURRENT, result.summaryForLine(2)?.lineageFor(diff))
+    }
+
+    @Test
+    fun committedCurrentOnlyLineIsClassifiedFromMergeBaseAndPropagationIsCounted() = runBlocking {
+        git("branch", "feature/before-addition")
+        writeFile("foo.kt", "alpha\nnew committed line\nbeta\ngamma\n")
+        git("add", "foo.kt")
+        git("commit", "-m", "add current line")
+        val additionCommit = gitOutput("rev-parse", "HEAD")
+
+        val result = buildAnalyzer().analyze(
+            EditorSnapshot(repo.resolve("foo.kt"), "alpha\nnew committed line\nbeta\ngamma\n", 2L),
+        ) as FileAnalysisResult.Computed
+
+        val diff = result.perLineDifferences[2]
+            ?.filterIsInstance<BranchLineDifference.DeletedInBranch>()
+            ?.single()
+        assertTrue("expected a current-only line", diff != null)
+        assertEquals(ChangeLineage.ADDED_ON_CURRENT, result.summaryForLine(2)?.lineageFor(diff!!))
+        assertEquals(emptySet<String>(), result.commitContainment[additionCommit])
+    }
+
+    @Test
     fun noOtherBranchesYieldsSkipped() = runBlocking {
         val analyzer = buildAnalyzer()
         val result = analyzer.analyze(
@@ -153,19 +210,61 @@ class BranchLensAnalyzerTest {
         assertEquals(SkippedReason.NO_OTHER_BRANCHES, (result as FileAnalysisResult.Skipped).reason)
     }
 
+    @Test
+    fun pinnedBranchPatternsRestrictAnalysis() = runBlocking {
+        git("checkout", "-b", "release/one")
+        writeFile("foo.kt", "alpha\nRELEASE\ngamma\n")
+        git("commit", "-am", "release edit")
+        git("checkout", "main")
+        git("checkout", "-b", "feature/other")
+        writeFile("foo.kt", "alpha\nFEATURE\ngamma\n")
+        git("commit", "-am", "feature edit")
+        git("checkout", "main")
+
+        val result = buildAnalyzer(
+            branchScopeMode = BranchScopeMode.PINNED,
+            pinnedBranches = setOf("release/*"),
+        ).analyze(EditorSnapshot(repo.resolve("foo.kt"), "alpha\nbeta\ngamma\n", 0L))
+
+        val computed = result as FileAnalysisResult.Computed
+        assertEquals(1, computed.branchCount)
+        assertEquals(setOf("release/one"), computed.perLineDifferences.values.flatten().map { it.branch.name }.toSet())
+    }
+
+    @Test
+    fun renamedBranchSideFileIsResolvedBeforeDiffing() = runBlocking {
+        git("checkout", "-b", "feature/renamed")
+        git("mv", "foo.kt", "old-name.kt")
+        writeFile("old-name.kt", "alpha\nBETA\ngamma\n")
+        git("commit", "-am", "rename and edit")
+        git("checkout", "main")
+
+        val result = buildAnalyzer().analyze(
+            EditorSnapshot(repo.resolve("foo.kt"), "alpha\nbeta\ngamma\n", 0L),
+        ) as FileAnalysisResult.Computed
+
+        assertEquals("old-name.kt", result.branchPaths["feature/renamed"])
+        assertTrue(result.perLineDifferences[2].orEmpty().any { it.branch.name == "feature/renamed" })
+    }
+
     private fun buildAnalyzer(
         maxLines: Int = 10_000,
+        maxFileBytes: Long = 2L * 1024 * 1024,
         ignoreWhitespace: Boolean = false,
         excluded: List<String> = emptyList(),
+        branchScopeMode: BranchScopeMode = BranchScopeMode.RECENT,
+        pinnedBranches: Set<String> = emptySet(),
     ): BranchLensAnalyzer = BranchLensAnalyzer(
         locator = GitRepositoryLocator(cli, timeoutMs),
         branches = GitBranchProvider(cli, timeoutMs),
         blobs = GitBlobReader(cli, timeoutMs),
+        renameResolver = GitRenameResolver(cli, timeoutMs),
         diffRunner = GitDiffRunner(cli, timeoutMs),
         blameRunner = GitBlameRunner(cli, timeoutMs),
+        historyAnalyzer = GitHistoryAnalyzer(cli, timeoutMs),
         settings = BranchLensAnalyzer.AnalyzerSettings(
             maxLines = maxLines,
-            maxFileBytes = 2L * 1024 * 1024,
+            maxFileBytes = maxFileBytes,
             maxBranches = 30,
             staleBranchDays = 365 * 10,
             includeStaleBranches = true,
@@ -173,6 +272,9 @@ class BranchLensAnalyzerTest {
             useMoveAwareBlame = true,
             useCopyAwareBlame = false,
             excludedBranchPatterns = excluded,
+            maxConcurrentGitProcesses = 3,
+            branchScopeMode = branchScopeMode,
+            pinnedBranchNames = pinnedBranches,
         ),
     )
 
@@ -194,6 +296,17 @@ class BranchLensAnalyzerTest {
         val output = p.inputStream.bufferedReader().use { it.readText() }
         val exit = p.waitFor()
         if (exit != 0) throw IllegalStateException("git ${args.joinToString(" ")} failed ($exit): $output")
+    }
+
+    private fun gitOutput(vararg args: String): String {
+        val pb = ProcessBuilder(listOf("git") + args.toList())
+        pb.directory(repo.toFile())
+        pb.redirectErrorStream(true)
+        val p = pb.start()
+        val output = p.inputStream.bufferedReader().use { it.readText() }
+        val exit = p.waitFor()
+        if (exit != 0) throw IllegalStateException("git ${args.joinToString(" ")} failed ($exit): $output")
+        return output.trim()
     }
 
     private fun gitAvailable(): Boolean = try {

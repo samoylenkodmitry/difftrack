@@ -1,6 +1,8 @@
 package dev.branchlens.settings
 
 import com.intellij.openapi.options.Configurable
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.ComboBox
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextArea
@@ -10,7 +12,7 @@ import com.intellij.util.ui.JBUI
 import javax.swing.JComponent
 import javax.swing.JPanel
 
-class BranchLensConfigurable : Configurable {
+class BranchLensConfigurable(private val project: Project) : Configurable {
 
     private val enabled = JBCheckBox("Enable Branch Lens")
     private val maxLines = JBTextField()
@@ -25,6 +27,9 @@ class BranchLensConfigurable : Configurable {
     private val renderMargin = JBTextField()
     private val maxConcurrent = JBTextField()
     private val excludedPatterns = JBTextArea(4, 30)
+    private val branchScope = ComboBox(BranchScopeMode.entries.toTypedArray())
+    private val includeRemoteTracking = JBCheckBox("Include locally available remote-tracking branches")
+    private val pinnedBranches = JBTextArea(4, 30)
 
     private var panel: JPanel? = null
 
@@ -32,8 +37,21 @@ class BranchLensConfigurable : Configurable {
 
     override fun createComponent(): JComponent {
         excludedPatterns.lineWrap = false
+        pinnedBranches.lineWrap = false
+        branchScope.renderer = com.intellij.ui.SimpleListCellRenderer.create("") { mode ->
+            when (mode) {
+                BranchScopeMode.RECENT -> "Recent branches"
+                BranchScopeMode.PINNED -> "Pinned branches only"
+                BranchScopeMode.ALL -> "All branches within the configured limit"
+            }
+        }
         val built = FormBuilder.createFormBuilder()
             .addComponent(enabled)
+            .addSeparator()
+            .addLabeledComponent("Branches to analyze:", branchScope)
+            .addComponent(includeRemoteTracking)
+            .addLabeledComponent(JBLabel("Pinned branches or patterns (one per line):"), pinnedBranches)
+            .addSeparator()
             .addLabeledComponent("Max lines per file:", maxLines)
             .addLabeledComponent("Max branches to analyze:", maxBranches)
             .addLabeledComponent("Hide branches older than (days):", staleDays)
@@ -59,7 +77,11 @@ class BranchLensConfigurable : Configurable {
 
     override fun isModified(): Boolean {
         val s = BranchLensSettings.getInstance().state
+        val projectState = BranchLensProjectSettings.getInstance(project).state
         return enabled.isSelected != s.enabled ||
+            branchScope.selectedItem != projectState.branchScopeMode ||
+            includeRemoteTracking.isSelected != projectState.includeRemoteTrackingBranches ||
+            pinnedBranchesFromUi() != projectState.pinnedBranches ||
             maxLines.text.toIntOrNull() != s.maxLines ||
             maxBranches.text.toIntOrNull() != s.maxBranches ||
             staleDays.text.toIntOrNull() != s.staleBranchDays ||
@@ -90,11 +112,21 @@ class BranchLensConfigurable : Configurable {
             maxConcurrentGitProcesses = this@BranchLensConfigurable.maxConcurrent.text.toIntOrNull()?.coerceAtLeast(1) ?: maxConcurrentGitProcesses
             excludedBranchPatterns = patternsFromUi().toMutableList()
         }
+        BranchLensProjectSettings.getInstance(project).update {
+            branchScopeMode = this@BranchLensConfigurable.branchScope.selectedItem as? BranchScopeMode
+                ?: BranchScopeMode.RECENT
+            includeRemoteTrackingBranches = this@BranchLensConfigurable.includeRemoteTracking.isSelected
+            pinnedBranches = pinnedBranchesFromUi().toMutableList()
+        }
     }
 
     override fun reset() {
         val s = BranchLensSettings.getInstance().state
+        val projectState = BranchLensProjectSettings.getInstance(project).state
         enabled.isSelected = s.enabled
+        branchScope.selectedItem = projectState.branchScopeMode
+        includeRemoteTracking.isSelected = projectState.includeRemoteTrackingBranches
+        pinnedBranches.text = projectState.pinnedBranches.joinToString("\n")
         maxLines.text = s.maxLines.toString()
         maxBranches.text = s.maxBranches.toString()
         staleDays.text = s.staleBranchDays.toString()
@@ -111,4 +143,7 @@ class BranchLensConfigurable : Configurable {
 
     private fun patternsFromUi(): List<String> =
         excludedPatterns.text.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+
+    private fun pinnedBranchesFromUi(): List<String> =
+        pinnedBranches.text.split('\n').map { it.trim() }.filter { it.isNotEmpty() }.distinct()
 }

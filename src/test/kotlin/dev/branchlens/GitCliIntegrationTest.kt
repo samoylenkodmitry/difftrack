@@ -75,6 +75,48 @@ class GitCliIntegrationTest {
     }
 
     @Test
+    fun optionallyListsRemoteTrackingBranchesButNotRemoteHeadAliases() = runBlocking {
+        runGit("update-ref", "refs/remotes/origin/topic", "HEAD")
+        runGit("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/topic")
+
+        val provider = GitBranchProvider(cli, timeoutMs)
+        val localOnly = provider.listLocal(repo, "main")
+        assertTrue(localOnly.none { it.isRemoteTracking })
+
+        val withRemotes = provider.listLocal(repo, "main", includeRemoteTracking = true)
+        val remote = withRemotes.single { it.name == "origin/topic" }
+        assertTrue(remote.isRemoteTracking)
+        assertTrue(withRemotes.none { it.name == "origin/HEAD" })
+    }
+
+    @Test
+    fun reportsLocalBranchAheadAndBehindItsUpstream() = runBlocking {
+        val base = gitOutput("rev-parse", "HEAD")
+        runGit("remote", "add", "origin", ".")
+        runGit("update-ref", "refs/remotes/origin/main", base)
+        runGit("config", "branch.main.remote", "origin")
+        runGit("config", "branch.main.merge", "refs/heads/main")
+
+        writeFile("local.txt", "local\n")
+        runGit("add", "local.txt")
+        runGit("commit", "-m", "local work")
+
+        runGit("checkout", "-b", "remote-work", base)
+        writeFile("remote.txt", "remote\n")
+        runGit("add", "remote.txt")
+        runGit("commit", "-m", "remote work")
+        runGit("update-ref", "refs/remotes/origin/main", "HEAD")
+        runGit("checkout", "main")
+
+        val main = GitBranchProvider(cli, timeoutMs)
+            .listLocal(repo, "main", includeRemoteTracking = true)
+            .first { it.name == "main" }
+        assertEquals("origin/main", main.upstreamName)
+        assertEquals(1, main.commitsAheadOfUpstream)
+        assertEquals(1, main.commitsBehindUpstream)
+    }
+
+    @Test
     fun blobReaderReturnsContentForExistingFileAndNotFoundOtherwise() = runBlocking {
         val locator = GitRepositoryLocator(cli, timeoutMs)
         val gitRepo = locator.locate(repo.resolve("foo.kt"))!!
@@ -140,6 +182,17 @@ class GitCliIntegrationTest {
         if (exit != 0) throw IllegalStateException("git ${args.joinToString(" ")} failed ($exit): $output")
     }
 
+    private fun gitOutput(vararg args: String): String {
+        val pb = ProcessBuilder(listOf("git") + args.toList())
+        pb.directory(repo.toFile())
+        pb.redirectErrorStream(true)
+        val p = pb.start()
+        val output = p.inputStream.bufferedReader().use { it.readText() }
+        val exit = p.waitFor()
+        if (exit != 0) throw IllegalStateException("git ${args.joinToString(" ")} failed ($exit): $output")
+        return output.trim()
+    }
+
     private fun deleteRecursively(path: Path) {
         if (!Files.exists(path)) return
         Files.walk(path).sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
@@ -152,4 +205,3 @@ class GitCliIntegrationTest {
         false
     }
 }
-

@@ -59,10 +59,14 @@ class GitCli(
             addAll(args)
         }
         val process: Process = try {
-            ProcessBuilder(command)
-                .directory(workingDir.toFile())
-                .redirectErrorStream(false)
-                .start()
+            ProcessBuilder(command).apply {
+                directory(workingDir.toFile())
+                redirectErrorStream(false)
+                // Several machine-readable Git formats still contain translated
+                // fragments (for example %(upstream:track)). Keep parsers stable.
+                environment()["LC_ALL"] = "C"
+                environment()["LANG"] = "C"
+            }.start()
         } catch (e: IOException) {
             throw GitNotFoundException("Failed to launch git: ${e.message}")
         }

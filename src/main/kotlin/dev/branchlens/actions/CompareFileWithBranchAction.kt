@@ -19,12 +19,20 @@ import com.intellij.ui.ColoredListCellRenderer
 import com.intellij.ui.SimpleTextAttributes
 import dev.branchlens.BranchLensProjectService
 import dev.branchlens.git.BlobResult
+import dev.branchlens.git.BranchPairCollapser
 import dev.branchlens.git.GitBlobReader
+import dev.branchlens.git.GitBlameRunner
 import dev.branchlens.git.GitBranchProvider
 import dev.branchlens.git.GitCli
 import dev.branchlens.git.GitRepositoryLocator
+import dev.branchlens.git.GitPathUtil
+import dev.branchlens.git.GitRenameResolver
 import dev.branchlens.model.LocalBranch
+import dev.branchlens.model.displayName
 import dev.branchlens.settings.BranchLensSettings
+import dev.branchlens.diff.BRANCH_LENS_DIFF_ANNOTATIONS
+import dev.branchlens.diff.BranchLensDiffAnnotationData
+import dev.branchlens.util.TempFileUtil
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -38,7 +46,7 @@ import javax.swing.JList
  * Editor / VCS-menu action: pick any local branch, diff the current file against its
  * version on that branch with IntelliJ's built-in diff viewer.
  *
- * Surfaced via `Compare File with Local Branch…` so users who don't notice the gutter
+ * Surfaced via `Compare File with Git Branch…` so users who don't notice the gutter
  * badges still have a discoverable entry point (Find Action / right-click in editor).
  */
 class CompareFileWithBranchAction : AnAction() {
@@ -68,14 +76,16 @@ class CompareFileWithBranchAction : AnAction() {
             editor: Editor,
             virtualFile: VirtualFile,
             e: AnActionEvent,
+            cli: GitCli,
         ) {
             val log = thisLogger()
             val state = BranchLensSettings.getInstance().state.copyState()
-            val cli = GitCli(maxConcurrent = state.maxConcurrentGitProcesses)
             val timeout = state.gitCommandTimeoutMs.toLong()
             val locator = GitRepositoryLocator(cli, timeout)
             val branchProvider = GitBranchProvider(cli, timeout)
             val blobs = GitBlobReader(cli, timeout)
+            val blameRunner = GitBlameRunner(cli, timeout)
+            val renameResolver = GitRenameResolver(cli, timeout)
 
             val filePath = try {
                 virtualFile.toNioPath()
@@ -90,16 +100,30 @@ class CompareFileWithBranchAction : AnAction() {
                 return
             }
 
-            val allBranches = branchProvider.listLocal(repo.root, repo.currentBranch)
-            val pickable = allBranches.filter { !it.isCurrent }
+            val includeRemote = dev.branchlens.settings.BranchLensProjectSettings
+                .getInstance(project).state.includeRemoteTrackingBranches
+            val allBranches = branchProvider.listLocal(repo.root, repo.currentBranch, includeRemote)
+            val pickable = BranchPairCollapser.collapse(allBranches).filter { !it.isCurrent }
             if (pickable.isEmpty()) {
-                showHint(editor, e, "Branch Lens: no other local branches to compare against")
+                showHint(editor, e, "Branch Lens: no other Git branches to compare against")
                 return
             }
 
             withContext(Dispatchers.EDT) {
                 if (project.isDisposed) return@withContext
-                showChooser(project, editor, virtualFile, repo.root, pickable, blobs, e, scope)
+                showChooser(
+                    project,
+                    editor,
+                    virtualFile,
+                    repo.root,
+                    repo.headCommit,
+                    pickable,
+                    blobs,
+                    blameRunner,
+                    renameResolver,
+                    e,
+                    scope,
+                )
             }
         }
 
@@ -108,8 +132,11 @@ class CompareFileWithBranchAction : AnAction() {
             editor: Editor,
             virtualFile: VirtualFile,
             repoRoot: java.nio.file.Path,
+            currentHead: String?,
             branches: List<LocalBranch>,
             blobs: GitBlobReader,
+            blameRunner: GitBlameRunner,
+            renameResolver: GitRenameResolver,
             e: AnActionEvent,
             scope: CoroutineScope,
         ) {
@@ -120,7 +147,10 @@ class CompareFileWithBranchAction : AnAction() {
                 .setNamerForFiltering { it.name }
                 .setItemChosenCallback { branch ->
                     scope.launch {
-                        openDiff(project, editor, virtualFile, repoRoot, branch, blobs)
+                        openDiff(
+                            project, editor, virtualFile, repoRoot, currentHead, branch,
+                            blobs, blameRunner, renameResolver,
+                        )
                     }
                 }
                 .createPopup()
@@ -133,16 +163,35 @@ class CompareFileWithBranchAction : AnAction() {
             editor: Editor,
             virtualFile: VirtualFile,
             repoRoot: java.nio.file.Path,
+            currentHead: String?,
             branch: LocalBranch,
             blobs: GitBlobReader,
+            blameRunner: GitBlameRunner,
+            renameResolver: GitRenameResolver,
         ) {
-            val relativePath = try {
-                repoRoot.relativize(virtualFile.toNioPath()).toString().replace('\\', '/')
-            } catch (_: Throwable) {
-                virtualFile.name
+            val relativePath = GitPathUtil.relativePath(repoRoot, virtualFile.toNioPath())
+            if (relativePath == null) {
+                withContext(Dispatchers.EDT) {
+                    showHint(editor, null, "Branch Lens: file is outside the Git repository")
+                }
+                return
             }
             val state = BranchLensSettings.getInstance().state.copyState()
-            val branchText: String? = when (val blob = blobs.read(repoRoot, branch.headCommit, relativePath, state.maxFileBytes)) {
+            var branchPath = relativePath
+            var blob = blobs.read(repoRoot, branch.headCommit, branchPath, state.maxFileBytes)
+            if (blob is BlobResult.NotFound && currentHead != null) {
+                val renamedPath = renameResolver.pathInBranch(
+                    repoRoot,
+                    branch.headCommit,
+                    currentHead,
+                    relativePath,
+                )
+                if (renamedPath != null) {
+                    branchPath = renamedPath
+                    blob = blobs.read(repoRoot, branch.headCommit, branchPath, state.maxFileBytes)
+                }
+            }
+            val branchText: String? = when (blob) {
                 is BlobResult.Text -> blob.content
                 BlobResult.NotFound -> null
                 BlobResult.Binary -> {
@@ -150,6 +199,33 @@ class CompareFileWithBranchAction : AnAction() {
                         showHint(editor, null, "Branch Lens: '${relativePath}' is binary or too large in ${branch.name}")
                     }
                     return
+                }
+            }
+
+            val branchBlame = blameRunner.blame(
+                repoRoot,
+                branch.headCommit,
+                branchPath,
+                range = null,
+                useMoveAware = state.useMoveAwareBlame,
+                useCopyAware = state.useCopyAwareBlame,
+            )
+            val currentBlame = if (currentHead == null) {
+                emptyMap()
+            } else {
+                val currentTmp = TempFileUtil.writeTempUtf8("branchlens-annotate-", ".txt", editor.document.text)
+                try {
+                    blameRunner.blameContents(
+                        repoRoot,
+                        currentHead,
+                        relativePath,
+                        currentTmp,
+                        range = null,
+                        useMoveAware = state.useMoveAwareBlame,
+                        useCopyAware = state.useCopyAwareBlame,
+                    )
+                } finally {
+                    TempFileUtil.safeDelete(currentTmp)
                 }
             }
 
@@ -164,11 +240,15 @@ class CompareFileWithBranchAction : AnAction() {
                     factory.createEmpty()
                 }
                 val request = SimpleDiffRequest(
-                    "Branch Lens — ${virtualFile.name}: current vs ${branch.name}",
+                    "Branch Lens — ${virtualFile.name}: current vs ${branch.displayName}",
                     currentContent,
                     branchContent,
                     "${virtualFile.name}  (current)",
-                    "${virtualFile.name}  @ ${branch.name}",
+                    "$branchPath  @ ${branch.displayName}",
+                )
+                request.putUserData(
+                    BRANCH_LENS_DIFF_ANNOTATIONS,
+                    BranchLensDiffAnnotationData(currentBlame, branchBlame, repoRoot),
                 )
                 DiffManager.getInstance().showDiff(project, request)
             }
@@ -198,7 +278,7 @@ private class BranchListRenderer : ColoredListCellRenderer<LocalBranch>() {
         selected: Boolean,
         hasFocus: Boolean,
     ) {
-        append(value.name, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
+        append(value.displayName, SimpleTextAttributes.REGULAR_BOLD_ATTRIBUTES)
         val author = value.authorName
         val time = value.committerDateEpochSeconds
         val tail = buildList {

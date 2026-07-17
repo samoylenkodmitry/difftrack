@@ -1,3 +1,5 @@
 <idea-plugin>
-    <!-- Optional Git4Idea-dependent extensions go here in future revisions. -->
+    <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="dev.branchlens.git.BranchLensGitStartupActivity"/>
+    </extensions>
 </idea-plugin>

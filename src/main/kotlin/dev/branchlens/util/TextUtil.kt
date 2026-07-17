@@ -33,6 +33,28 @@ object TextUtil {
         return count.coerceAtLeast(1)
     }
 
+    fun utf8SizeExceeds(text: String, maxBytes: Long): Boolean {
+        if (maxBytes < 0) return true
+        var bytes = 0L
+        var index = 0
+        while (index < text.length) {
+            val ch = text[index]
+            bytes += when {
+                ch.code <= 0x7F -> 1
+                ch.code <= 0x7FF -> 2
+                Character.isHighSurrogate(ch) && index + 1 < text.length &&
+                    Character.isLowSurrogate(text[index + 1]) -> {
+                    index++
+                    4
+                }
+                else -> 3
+            }
+            if (bytes > maxBytes) return true
+            index++
+        }
+        return false
+    }
+
     fun stableHash(text: String): String {
         var h1 = 0x9E3779B9L.toInt()
         var h2 = 0x85EBCA6BL.toInt()

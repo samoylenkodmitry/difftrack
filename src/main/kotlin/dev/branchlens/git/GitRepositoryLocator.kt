@@ -10,7 +10,8 @@ class GitRepositoryLocator(private val cli: GitCli, private val timeoutMs: Long)
         val parent = if (Files.isDirectory(forFile)) forFile else forFile.parent ?: return null
         val rootResult = cli.run(parent, listOf("rev-parse", "--show-toplevel"), timeoutMs)
         if (rootResult.exitCode != 0) return null
-        val root = Path.of(rootResult.stdoutText.trim())
+        val parsedRoot = Path.of(rootResult.stdoutText.trim())
+        val root = GitPathUtil.canonical(parsedRoot)
 
         val branchResult = cli.run(root, listOf("symbolic-ref", "--quiet", "--short", "HEAD"), timeoutMs)
         val currentBranch = if (branchResult.exitCode == 0) branchResult.stdoutText.trim().ifEmpty { null } else null

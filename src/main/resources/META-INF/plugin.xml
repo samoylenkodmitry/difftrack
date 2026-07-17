@@ -1,4 +1,4 @@
-<idea-plugin>
+<idea-plugin url="https://github.com/samoylenkodmitry/difftrack#readme">
     <id>dev.branchlens</id>
     <name>Branch Lens</name>
     <vendor email="trdmitriisamoilenko@gmail.com" url="https://github.com/samoylenkodmitry/difftrack">Branch Lens</vendor>
@@ -17,6 +17,7 @@
     <extensions defaultExtensionNs="com.intellij">
         <projectService serviceImplementation="dev.branchlens.BranchLensProjectService"/>
         <projectService serviceImplementation="dev.branchlens.cache.BranchLensCache"/>
+        <projectService serviceImplementation="dev.branchlens.settings.BranchLensProjectSettings"/>
         <applicationService serviceImplementation="dev.branchlens.settings.BranchLensSettings"/>
         <projectConfigurable
             parentId="tools"
@@ -28,13 +29,14 @@
                     anchor="bottom"
                     icon="AllIcons.Vcs.Branch"
                     factoryClass="dev.branchlens.ui.BranchLensToolWindowFactory"/>
+        <diffExtension implementation="dev.branchlens.diff.BranchLensDiffExtension"/>
     </extensions>
 
     <actions>
         <action id="dev.branchlens.CompareFileWithBranch"
                 class="dev.branchlens.actions.CompareFileWithBranchAction"
-                text="Compare File with Local Branch…"
-                description="Show diff between the current file and its version on another local Git branch">
+                text="Compare File with Git Branch…"
+                description="Show the current file next to its version on another locally available Git branch">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="Vcs.MainMenu" anchor="last"/>
         </action>

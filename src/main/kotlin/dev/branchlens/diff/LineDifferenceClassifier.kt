@@ -4,6 +4,9 @@ import dev.branchlens.model.BlameInfo
 import dev.branchlens.model.BranchLineDifference
 import dev.branchlens.model.BranchLineDifference.BranchInsertionAfterCurrentLine
 import dev.branchlens.model.FileAnalysisResult
+import dev.branchlens.model.LocalBranch
+import dev.branchlens.model.ChangeLineage
+import java.nio.file.Path
 import dev.branchlens.util.TextUtil
 
 /**
@@ -21,7 +24,14 @@ object LineDifferenceClassifier {
         differences: List<BranchLineDifference>,
         branchCount: Int,
         branchContents: Map<String, String>,
+        branchPaths: Map<String, String> = emptyMap(),
         branchBlames: Map<String, Map<Int, BlameInfo>>,
+        currentBlame: Map<Int, BlameInfo> = emptyMap(),
+        currentBranch: LocalBranch? = null,
+        analyzedBranches: List<LocalBranch> = emptyList(),
+        lineages: Map<String, ChangeLineage> = emptyMap(),
+        commitContainment: Map<String, Set<String>> = emptyMap(),
+        repoRoot: Path? = null,
     ): FileAnalysisResult.Computed {
         val perLine = HashMap<Int, MutableList<BranchLineDifference>>()
         val insertions = HashMap<Int, MutableList<BranchInsertionAfterCurrentLine>>()
@@ -55,10 +65,17 @@ object LineDifferenceClassifier {
             insertionsAfter = insertions,
             missingInBranches = missing,
             branchContents = branchContents,
+            branchPaths = branchPaths,
             branchBlames = branchBlames,
+            currentBlame = currentBlame,
             computedAtNanos = System.nanoTime(),
             documentHash = TextUtil.stableHash(documentText),
             branchCount = branchCount,
+            currentBranch = currentBranch,
+            analyzedBranches = analyzedBranches,
+            lineages = lineages,
+            commitContainment = commitContainment,
+            repoRoot = repoRoot,
         )
     }
 }

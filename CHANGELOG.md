@@ -2,6 +2,80 @@
 
 ## [Unreleased]
 
+### Added
+
+- Merge-base-aware lineage labels distinguish additions, removals, one-sided
+  modifications, independently modified lines, pre-divergence differences, and
+  uncommitted current changes.
+- The tool window defaults to a change-first view: one header per contiguous change
+  shows its origin commit, affected line range, differing-branch count, and exact
+  commit propagation across the selected branch tips. **By Change** toggles back to
+  the branch-first view.
+- Tool-window scope controls switch directly between **Recent**, **Pinned**, and
+  **All**, with a separate **Remotes** toggle.
+- Commit context actions show commit details, open the revision in IntelliJ Git Log,
+  copy its hash, and copy all affected branch names from a change header. Commit
+  actions are also available from gutter and Branch Lens diff annotations.
+- Current-snapshot blame identifies the author and date of committed current-side
+  changes and clearly marks unsaved or uncommitted lines.
+- Branch Lens diff windows show built-in author/date annotation columns for both
+  sides, including revision data that IntelliJ's disabled generic Annotate action
+  cannot provide for synthetic branch content.
+- Gutter popups collapse branches with the same line-level outcome into one summary
+  row. Selecting it reveals the individual branches for a specific full-file diff.
+- Consecutive lines affecting the same branch cohort render as one gutter region,
+  even when line pairing or branch-side blame changes inside the Git hunk.
+- Multiline regions use one count badge plus a vertical gutter marker spanning the
+  affected lines instead of repeating the badge on every line.
+- When grouped branches have identical file snapshots, paths, and relevant blame,
+  Branch Lens opens one shared diff labeled with the equivalent-branch count.
+- Project-specific branch scopes: recent branches, pinned branches only, or all
+  branches within the configured limit.
+- Optional analysis of locally available remote-tracking refs. Branch Lens still
+  performs no fetches and makes no network requests.
+- Automatic refresh when Git4Idea reports a branch or repository-state change.
+- Rename-aware lookup when the current file has a different path at a branch tip.
+- A grouped tool-window view with one section per affected branch and accurate
+  unique-line and affected-branch counts.
+- Diff viewers opened from a gutter badge or tool-window row now start at the
+  selected line.
+- Accessible names for gutter badges.
+- Gutter context actions for opening the branch diff, copying a plain-text
+  summary, and configuring branch scope.
+
+### Changed
+
+- Locally available remote-tracking branches are included by default.
+- A local branch and its configured upstream are collapsed into one `local ↔ remote`
+  entry when both refs point to the same commit. Diverged pairs remain separate.
+- The analysis header and branch entries show upstream status with commit counts:
+  `ahead ↑N`, `behind ↓N`, or `diverged ↑N ↓N`.
+- Current-side-only lines are described as “present only in current” or “absent in
+  branch” when history cannot resolve their lineage; otherwise the merge-base-aware
+  label identifies whether the current branch added the line or the other branch
+  removed it.
+- Branch analysis now runs concurrently within the configured Git process limit.
+- Blame is limited to the branch-line range involved in the diff instead of the
+  entire file.
+- Analysis and blame caches are bounded by estimated memory weight as well as
+  entry count.
+- Settings changes invalidate cached results and immediately reanalyze open files.
+- The Marketplace description now leads with the user workflow instead of
+  internal model names.
+- IntelliJ Platform Gradle Plugin updated to 2.18.1, with verification extended
+  through the 2026.1 platform line.
+
+### Fixed
+
+- Repository-relative paths are canonicalized, fixing false “file missing” results
+  for macOS path aliases such as `/var` and `/private/var`.
+- Unequal changed blocks no longer produce duplicate rows for every line in the
+  block.
+- Insertions before line 1 are now visible in both the gutter and tool window.
+- Files over the configured byte limit are skipped on both sides of the comparison.
+- `maxFileBytes` and branch-scope settings now participate in cache invalidation.
+- Missing files are no longer listed twice in the tool window.
+
 ## [0.1.1]
 
 ### Fixed

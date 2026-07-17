@@ -3,44 +3,78 @@
 [![Build](https://github.com/samoylenkodmitry/difftrack/actions/workflows/build.yml/badge.svg)](https://github.com/samoylenkodmitry/difftrack/actions/workflows/build.yml)
 
 <!-- Plugin description -->
-**Branch Lens** is an IntelliJ IDEA plugin that, for the currently open file, shows
-gutter badges next to lines or blocks that **differ in other local Git branches**, and
-tells you who last modified the corresponding branch-side line.
+**Branch Lens** shows how the file you are editing differs across your active Git
+branches—without checking out those branches or leaving the editor.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/samoylenkodmitry/difftrack/main/docs/screenshot.png" alt="Branch Lens gutter badges on pricing.kt" width="700"/>
 </p>
 
-Local Git only — no remotes, no fetch, no network, no fuzzy line-identity guesses.
-Git's own `diff` and `blame` are the source of truth.
+Small gutter badges identify changed lines and blocks. Hover for the affected
+branches, author, date, and commit subject; click to open IntelliJ's diff viewer at
+that line. Right-click a badge to inspect or copy its commit, open it in Git Log,
+copy the summary, or configure branch scope. The Branch Lens tool window groups
+identical results by originating change by default; switch off **By Change** for the
+traditional branch-first view.
 
-For every visible editor line the plugin reads the file's blob from each other local
-branch, compares it to the in-editor text via `git diff --no-index -U0`, and classifies
-each hunk conservatively as:
+Choose the branches that matter to your project:
 
-- **ReplacedLine** — exact 1-for-1 replacement (high or medium confidence)
-- **ChangedBlock** — replacement with unequal sizes; line pairing is ambiguous
-- **DeletedInBranch** — current line is absent in the branch
-- **BranchInsertionAfterCurrentLine** — the branch inserts extra lines here
-- **FileMissingInBranch** — the file does not exist in the branch
+- **Recent** — analyze recently updated branches.
+- **Pinned** — focus on branches such as `main`, `release/*`, or a teammate's feature.
+- **All** — analyze every branch within the configured safety limit.
+- Include remote-tracking refs already present in the local repository by default.
+  Matching local/upstream refs at the same commit are shown once as a paired entry;
+  diverged pairs remain separate and show their outgoing/incoming commit counts as
+  `diverged ↑ahead ↓behind`.
 
-Badges in the gutter:
+Branch Lens never fetches and makes no network requests. Git's own `diff` and
+`blame` remain the source of truth, and ambiguous edits are shown as changed blocks
+instead of invented line mappings. When a file was renamed on another branch,
+Branch Lens resolves its branch-side path before comparing it.
+
+Diff windows opened by Branch Lens include author/date annotation columns on both
+sides. Current-only lines use current-snapshot blame, so committed additions show
+their author and date while working-tree additions are labeled uncommitted.
+
+Branch Lens compares each side's blame commit with the branches' merge base to
+distinguish changes such as **added on current**, **removed on branch**, and
+**modified independently**. This is history-based evidence rather than a guess from
+the diff direction; rewritten or cherry-picked history may still be labeled
+**history unclear**.
+
+When many branches produce the same outcome at a line, the gutter popup shows one
+summary such as `8 branches — present only in current`. Choose that row only when
+you need to drill down to a particular branch's full-file diff.
+
+Contiguous lines affecting the same branch cohort share one badge at the start and
+a vertical gutter marker spanning the region. Line pairing and branch-side blame may
+vary inside the region without fragmenting it. If every grouped branch would produce
+the exact same full-file diff and attribution, Branch Lens opens one common diff
+labeled `8 equivalent branches`; otherwise it keeps the branch drill-down.
+
+The change-first tool-window header shows the origin commit, affected line range,
+how many selected branches differ, and how many branch tips contain that exact
+commit. Right-click it for commit details, Git Log navigation, hash copying, or a
+newline-separated list of affected branches. Its toolbar provides immediate
+**Recent / Pinned / All / Remotes** scope controls.
+
+Badge meanings:
 
 | Badge | Meaning                                              |
 |-------|------------------------------------------------------|
-| `1`–`9` | Number of local branches where this line differs.  |
+| `1`–`9` | Number of selected branches where this line differs. |
 | `9+`  | 10 or more branches differ.                          |
 | `±`   | At least one *changed-block* difference (ambiguous). |
 | `+`   | Only branch-side insertions anchor to this line.     |
 | `?`   | File is missing in (at least one of) the branches.   |
 
-Hover any badge for an HTML tooltip listing each branch with the blame author, date,
-and commit subject for the corresponding branch-side line. Click a badge to open
-IntelliJ's built-in diff viewer (with a chooser first when more than one branch
-differs at that line). A `Branch Lens` tool window at the bottom of the IDE lists
-every diverging line in the active file. The action **`Compare File with Local
-Branch…`** (right-click in editor / `Ctrl+Shift+A`) lets you pick any local branch
-and open the diff without needing a gutter badge.
+The action **`Compare File with Git Branch…`** is available from the editor context
+menu and Find Action. Configure branch scope and performance limits under
+**Settings → Tools → Branch Lens**.
+
+[Documentation](https://github.com/samoylenkodmitry/difftrack#readme) ·
+[Report an issue](https://github.com/samoylenkodmitry/difftrack/issues/new/choose) ·
+[Source code](https://github.com/samoylenkodmitry/difftrack)
 <!-- Plugin description end -->
 
 ## Demo
@@ -54,12 +88,12 @@ open [`docs/demo.mp4`](docs/demo.mp4) directly on GitHub.
 
 - **Do not invent line identity.** Git diff hunks are the source of truth. Ambiguous
   multi-line edits are reported as *changed blocks*, never as fake exact mappings.
-- **Local-only.** No remotes, no fetch, no network.
+- **Offline by design.** Local and locally available remote-tracking refs only; no
+  fetch and no network.
 - **Cheap to scroll, expensive to edit.** Analysis runs on document change (debounced);
   scrolling just re-renders visible badges from the cached result.
-- **Cooperative cancellation.** Every analysis is a coroutine job tied to the project
-  scope; document changes / file closes cancel in-flight work and destroy the
-  subprocess.
+- **Bounded concurrency.** Branch analysis runs in parallel within a project-level
+  Git process limit; document changes cancel obsolete work and its subprocesses.
 - **Skip what's not safe.** Files over 10,000 lines, binary files, and files outside
   Git are silently skipped.
 
@@ -81,8 +115,8 @@ All adjustable via **Settings → Tools → Branch Lens**.
 ## Building
 
 Requires JDK 21 (Gradle's toolchain feature will provision it if needed) and an
-internet connection on first build (to download Gradle 9.4.1 and the IntelliJ
-Platform sources).
+internet connection on first build so the wrapper and IntelliJ Platform dependencies
+can be downloaded.
 
 ```bash
 ./gradlew check        # unit tests + git-CLI integration tests
@@ -142,14 +176,15 @@ for how to generate the certificate / key pair.
 - JDK 21 toolchain (auto-provisioned by Gradle).
 - Kotlin 2.1.
 
-## Roadmap (post-MVP, not in v1)
+## Roadmap
 
 - PSI-aware semantic line matching.
-- Remote-branch and pull-request integration.
+- Cross-file move/copy attribution beyond direct file renames.
+- Optional pull-request context supplied by installed VCS integrations.
 - Cross-file move/rename detection between branch tips (`git diff -M`).
 - Lazy *find deletion commit* via `git log -S/-G`.
-- Tool window with all line differences.
-- Branch pinning, file-level heatmap.
+- File-level heatmap and project-wide divergence view.
+- Native frontend/backend split for JetBrains Remote Development.
 
 See [`roadmap.md`](roadmap.md) for the full specification this implementation is built
 against.
