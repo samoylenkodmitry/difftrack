@@ -36,6 +36,37 @@ class GitBlameRunner(private val cli: GitCli, private val timeoutMs: Long) {
         if (result.exitCode != 0) return emptyMap()
         return PorcelainBlameParser.parse(result.stdoutText)
     }
+
+    /** Blames an editor snapshot while retaining HEAD history for unchanged lines. */
+    suspend fun blameContents(
+        repoRoot: Path,
+        branchCommit: String,
+        relativePath: String,
+        contentsPath: Path,
+        range: IntRange?,
+        useMoveAware: Boolean,
+        useCopyAware: Boolean,
+    ): Map<Int, BlameInfo> {
+        val args = buildList {
+            add("blame")
+            add("--line-porcelain")
+            add("-w")
+            if (useMoveAware) add("-M")
+            if (useCopyAware) add("-C")
+            if (range != null) {
+                add("-L")
+                add("${range.first},${range.last}")
+            }
+            add("--contents")
+            add(contentsPath.toString())
+            add(branchCommit)
+            add("--")
+            add(relativePath)
+        }
+        val result = cli.run(repoRoot, args, timeoutMs)
+        if (result.exitCode != 0) return emptyMap()
+        return PorcelainBlameParser.parse(result.stdoutText)
+    }
 }
 
 internal object PorcelainBlameParser {

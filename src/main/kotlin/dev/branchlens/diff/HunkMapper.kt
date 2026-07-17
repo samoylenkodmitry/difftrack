@@ -68,16 +68,14 @@ object HunkMapper {
                     val branchRange = added.first().newLine..added.last().newLine
                     val currentTexts = removed.map { it.text }
                     val branchTexts = added.map { it.text }
-                    for (r in removed) {
-                        out += BranchLineDifference.ChangedBlock(
-                            branch = branch,
-                            currentLines = currentRange,
-                            branchLines = branchRange,
-                            currentText = currentTexts,
-                            branchText = branchTexts,
-                            confidence = Confidence.BLOCK_ONLY,
-                        )
-                    }
+                    out += BranchLineDifference.ChangedBlock(
+                        branch = branch,
+                        currentLines = currentRange,
+                        branchLines = branchRange,
+                        currentText = currentTexts,
+                        branchText = branchTexts,
+                        confidence = Confidence.BLOCK_ONLY,
+                    )
                 }
                 removed.isNotEmpty() && added.isEmpty() -> {
                     for (r in removed) {
@@ -89,13 +87,18 @@ object HunkMapper {
                     }
                 }
                 removed.isEmpty() && added.isNotEmpty() -> {
-                    val anchor = (hunk.oldStart - 1).coerceAtLeast(0)
+                    // There is no editor line zero. Surface an insertion before the
+                    // first line on line one and retain its placement explicitly so
+                    // the UI can describe it accurately.
+                    val beforeFirstLine = hunk.oldStart == 0
+                    val anchor = if (beforeFirstLine) 1 else (hunk.oldStart - 1).coerceAtLeast(1)
                     val branchRange = added.first().newLine..added.last().newLine
                     out += BranchLineDifference.BranchInsertionAfterCurrentLine(
                         branch = branch,
                         anchorCurrentLine = anchor,
                         branchLines = branchRange,
                         branchText = added.map { it.text },
+                        beforeFirstLine = beforeFirstLine,
                     )
                 }
             }

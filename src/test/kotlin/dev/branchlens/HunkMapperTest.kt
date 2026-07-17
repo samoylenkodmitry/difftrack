@@ -11,7 +11,7 @@ import org.junit.Test
 
 class HunkMapperTest {
 
-    private val branch = LocalBranch("feature/a", "abcdef0", 0L, "Tester", false)
+    private val branch = LocalBranch("feature/a", "abcdef0", 0L, "Tester", false, false, null, null, 0, 0)
 
     @Test
     fun singleReplacementProducesHighConfidence() {
@@ -56,13 +56,11 @@ class HunkMapperTest {
             +z()
         """.trimIndent()
         val diffs = HunkMapper.map(branch, UnifiedDiffParser.parse(raw))
-        assertEquals(2, diffs.size)
-        for (d in diffs) {
-            val b = d as BranchLineDifference.ChangedBlock
-            assertEquals(Confidence.BLOCK_ONLY, b.confidence)
-            assertEquals(10..11, b.currentLines)
-            assertEquals(10..12, b.branchLines)
-        }
+        assertEquals(1, diffs.size)
+        val block = diffs.single() as BranchLineDifference.ChangedBlock
+        assertEquals(Confidence.BLOCK_ONLY, block.confidence)
+        assertEquals(10..11, block.currentLines)
+        assertEquals(10..12, block.branchLines)
     }
 
     @Test
@@ -103,7 +101,8 @@ class HunkMapperTest {
         val diffs = HunkMapper.map(branch, UnifiedDiffParser.parse(raw))
         assertEquals(1, diffs.size)
         val insertion = diffs[0] as BranchLineDifference.BranchInsertionAfterCurrentLine
-        assertEquals(0, insertion.anchorCurrentLine)
+        assertEquals(1, insertion.anchorCurrentLine)
+        assertTrue(insertion.beforeFirstLine)
     }
 
     @Test

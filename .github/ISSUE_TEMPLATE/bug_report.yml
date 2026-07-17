@@ -34,18 +34,24 @@ body:
   - type: input
     id: version
     attributes:
-      label: Gradle IntelliJ Plugin version
-      placeholder: 1.16.0
+      label: Branch Lens version
+      placeholder: 0.2.0
     validations:
       required: true
 
   - type: input
-    id: gradle
+    id: ide
     attributes:
-      label: Gradle version
-      placeholder: 8.2.1
+      label: IDE and version
+      placeholder: IntelliJ IDEA 2026.1
     validations:
       required: true
+
+  - type: input
+    id: git
+    attributes:
+      label: Git version
+      placeholder: git version 2.55.0
 
   - type: dropdown
     id: os

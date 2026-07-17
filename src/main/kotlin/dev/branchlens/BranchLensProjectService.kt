@@ -28,9 +28,14 @@ import dev.branchlens.git.GitBranchProvider
 import dev.branchlens.git.GitCli
 import dev.branchlens.git.GitDiffRunner
 import dev.branchlens.git.GitRepositoryLocator
+import dev.branchlens.git.GitRenameResolver
+import dev.branchlens.git.GitHistoryAnalyzer
 import dev.branchlens.model.BranchLensSettingsState
 import dev.branchlens.model.FileAnalysisResult
 import dev.branchlens.settings.BranchLensSettings
+import dev.branchlens.settings.BranchLensSettingsListener
+import dev.branchlens.settings.BranchLensProjectSettings
+import dev.branchlens.settings.BranchLensProjectSettingsListener
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +44,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Service(Service.Level.PROJECT)
 class BranchLensProjectService(
@@ -52,6 +58,9 @@ class BranchLensProjectService(
     private val attachedDocs = ConcurrentHashMap<Document, MutableSet<Editor>>()
     private val renderer = GutterBadgeRenderer()
     private val listeners = java.util.concurrent.CopyOnWriteArrayList<ResultListener>()
+    private val started = AtomicBoolean(false)
+    private val cliLock = Any()
+    @Volatile private var cliHolder: Pair<Int, GitCli>? = null
     @Volatile private var activeEditor: Editor? = null
 
     fun interface ResultListener {
@@ -80,12 +89,18 @@ class BranchLensProjectService(
     }
 
     fun start() {
+        if (!started.compareAndSet(false, true)) return
         val bus = project.messageBus.connect(project)
         bus.subscribe(FileEditorManagerListener.FILE_EDITOR_MANAGER, object : FileEditorManagerListener {
             override fun selectionChanged(event: FileEditorManagerEvent) = scheduleForCurrentlyOpen()
             override fun fileOpened(source: FileEditorManager, file: VirtualFile) = scheduleForCurrentlyOpen()
             override fun fileClosed(source: FileEditorManager, file: VirtualFile) = cleanupClosed()
         })
+        bus.subscribe(BranchLensSettings.TOPIC, BranchLensSettingsListener { settingsChanged() })
+        bus.subscribe(
+            BranchLensProjectSettings.TOPIC,
+            BranchLensProjectSettingsListener { settingsChanged() },
+        )
 
         EditorFactory.getInstance().eventMulticaster.addDocumentListener(
             object : DocumentListener {
@@ -119,6 +134,7 @@ class BranchLensProjectService(
     }
 
     fun stop() {
+        started.set(false)
         for (job in analysisJobs.values) job.cancel()
         analysisJobs.clear()
         for ((editor, _) in lastResult) renderer.clear(editor)
@@ -134,7 +150,15 @@ class BranchLensProjectService(
         if (project.isDisposed) return
         scope.launch(Dispatchers.Default) {
             try {
-                CompareFileWithBranchAction.runCompareFlow(scope, project, editor, file, e)
+                val settings = BranchLensSettings.getInstance().state.copyState()
+                CompareFileWithBranchAction.runCompareFlow(
+                    scope,
+                    project,
+                    editor,
+                    file,
+                    e,
+                    gitCli(settings),
+                )
             } catch (_: CancellationException) {
                 // expected on project dispose
             } catch (t: Throwable) {
@@ -211,14 +235,17 @@ class BranchLensProjectService(
             return
         }
 
-        val cli = GitCli(maxConcurrent = settings.maxConcurrentGitProcesses)
+        val cli = gitCli(settings)
         val timeout = settings.gitCommandTimeoutMs.toLong()
+        val projectSettings = BranchLensProjectSettings.getInstance(project).state.copyState()
         val analyzer = BranchLensAnalyzer(
             locator = GitRepositoryLocator(cli, timeout),
             branches = GitBranchProvider(cli, timeout),
             blobs = GitBlobReader(cli, timeout),
+            renameResolver = GitRenameResolver(cli, timeout),
             diffRunner = GitDiffRunner(cli, timeout),
             blameRunner = GitBlameRunner(cli, timeout),
+            historyAnalyzer = GitHistoryAnalyzer(cli, timeout),
             settings = BranchLensAnalyzer.AnalyzerSettings(
                 maxLines = settings.maxLines,
                 maxFileBytes = settings.maxFileBytes,
@@ -229,6 +256,10 @@ class BranchLensProjectService(
                 useMoveAwareBlame = settings.useMoveAwareBlame,
                 useCopyAwareBlame = settings.useCopyAwareBlame,
                 excludedBranchPatterns = settings.excludedBranchPatterns.toList(),
+                maxConcurrentGitProcesses = settings.maxConcurrentGitProcesses,
+                branchScopeMode = projectSettings.branchScopeMode,
+                pinnedBranchNames = projectSettings.pinnedBranches.toSet(),
+                includeRemoteTrackingBranches = projectSettings.includeRemoteTrackingBranches,
             ),
             cache = BranchLensCache.getInstance(project),
         )
@@ -256,6 +287,37 @@ class BranchLensProjectService(
     }
 
     fun activeEditor(): Editor? = activeEditor
+
+    fun repositoryChanged() {
+        invalidateAndSchedule()
+    }
+
+    private fun settingsChanged() {
+        invalidateAndSchedule()
+    }
+
+    private fun invalidateAndSchedule() {
+        if (project.isDisposed) return
+        scope.launch(Dispatchers.EDT) {
+            if (project.isDisposed) return@launch
+            for (job in analysisJobs.values) job.cancel()
+            analysisJobs.clear()
+            BranchLensCache.getInstance(project).clear()
+            for (editor in lastResult.keys) renderer.clear(editor)
+            lastResult.clear()
+            activeEditor?.let { fireResult(it, null) }
+            scheduleForCurrentlyOpen()
+        }
+    }
+
+    private fun gitCli(settings: BranchLensSettingsState): GitCli {
+        val maxConcurrent = settings.maxConcurrentGitProcesses.coerceAtLeast(1)
+        cliHolder?.takeIf { it.first == maxConcurrent }?.let { return it.second }
+        return synchronized(cliLock) {
+            cliHolder?.takeIf { it.first == maxConcurrent }?.second
+                ?: GitCli(maxConcurrent = maxConcurrent).also { cliHolder = maxConcurrent to it }
+        }
+    }
 
     private fun buildSnapshot(editor: Editor): EditorSnapshot? {
         if (project.isDisposed) return null

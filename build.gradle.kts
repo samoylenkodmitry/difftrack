@@ -95,7 +95,7 @@ intellijPlatform {
                 types = listOf(org.jetbrains.intellij.platform.gradle.IntelliJPlatformType.IntellijIdeaCommunity)
                 channels = listOf(org.jetbrains.intellij.platform.gradle.models.ProductRelease.Channel.RELEASE)
                 sinceBuild = providers.gradleProperty("pluginSinceBuild")
-                untilBuild = providers.provider { "252.*" }
+                untilBuild = providers.provider { "261.*" }
             }
         }
     }
