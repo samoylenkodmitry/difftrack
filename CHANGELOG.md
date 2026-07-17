@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-17
+
 ### Added
 
 - Merge-base-aware lineage labels distinguish additions, removals, one-sided
@@ -123,7 +125,6 @@
 ### Initial MVP
 
 - Initial MVP per the spec in `roadmap.md`:
-
 - Initial MVP per the spec in `roadmap.md`:
   - Gutter badges for editor lines that differ in other local Git branches.
   - Conservative hunk-to-line classifier (`ReplacedLine`, `ChangedBlock`,
@@ -138,3 +139,7 @@
   - GitHub Actions CI: build, test, Qodana, plugin verifier, draft release.
   - Release workflow that publishes the signed plugin to JetBrains Marketplace
     when a GitHub release is published.
+
+[Unreleased]: https://github.com/samoylenkodmitry/difftrack/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/samoylenkodmitry/difftrack/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/samoylenkodmitry/difftrack/commits/v0.1.1
